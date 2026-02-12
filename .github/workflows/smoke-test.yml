@@ -1,0 +1,32 @@
+name: Smoke Test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.12"
+    - name: Smoke test (run training for up to 3 minutes)
+      run: |
+        timeout 180 python microgpt.py && echo "Completed!" || {
+          exit_code=$?
+          if [ $exit_code -eq 124 ]; then
+            echo "Timed out after 3 minutes (expected for full training) - PASS"
+          else
+            echo "Script failed with exit code $exit_code"
+            exit 1
+          fi
+        }

@@ -21,6 +21,7 @@ jobs:
         python-version: "3.12"
     - name: Smoke test (run training for up to 3 minutes)
       run: |
+        set +e
         timeout 180 python microgpt.py
         exit_code=$?
         if [ $exit_code -eq 0 ]; then

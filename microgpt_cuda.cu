@@ -18,23 +18,24 @@
 #include <utility>
 #include <vector>
 
-#define CUDA_CHECK(call)                                                             \
-    do {                                                                             \
-        cudaError_t err__ = (call);                                                  \
-        if (err__ != cudaSuccess) {                                                  \
-            throw std::runtime_error(std::string("CUDA error: ") +                  \
-                                     cudaGetErrorString(err__) +                     \
+#define CUDA_CHECK(call)                                                                 \
+    do {                                                                                 \
+        cudaError_t err__ = (call);                                                      \
+        if (err__ != cudaSuccess) {                                                      \
+            throw std::runtime_error(std::string("CUDA error: ") +                      \
+                                     cudaGetErrorString(err__) +                         \
                                      " at " + __FILE__ + ":" + std::to_string(__LINE__)); \
-        }                                                                            \
+        }                                                                                \
     } while (0)
 
-struct HyperParams {
-    int n_embd = 16;
-    int n_head = 4;
-    int n_layer = 1;
-    int block_size = 8;
-    int head_dim = 4;
-};
+constexpr int kNEmbd = 16;
+constexpr int kNHead = 4;
+constexpr int kNLayer = 1;
+constexpr int kBlockSize = 8;
+constexpr int kHeadDim = kNEmbd / kNHead;
+constexpr int kFcDim = 4 * kNEmbd;
+constexpr int kMaxVocab = 256;
+constexpr int kMaxTokens = kBlockSize + 1;
 
 struct TrainConfig {
     int num_steps = 500;
@@ -53,112 +54,6 @@ struct TrainConfig {
     float max_grad_norm = 1.0f;
 };
 
-struct Matrix {
-    int rows = 0;
-    int cols = 0;
-    std::vector<float> w;
-    std::vector<float> g;
-    std::vector<float> m;
-    std::vector<float> v;
-
-    Matrix() = default;
-
-    Matrix(int rows_, int cols_, float stddev, std::mt19937& rng)
-        : rows(rows_),
-          cols(cols_),
-          w(static_cast<size_t>(rows_) * static_cast<size_t>(cols_)),
-          g(w.size(), 0.0f),
-          m(w.size(), 0.0f),
-          v(w.size(), 0.0f) {
-        if (stddev == 0.0f) {
-            std::fill(w.begin(), w.end(), 0.0f);
-            return;
-        }
-        std::normal_distribution<float> dist(0.0f, stddev);
-        for (float& x : w) {
-            x = dist(rng);
-        }
-    }
-};
-
-struct LayerParams {
-    Matrix attn_wq;
-    Matrix attn_wk;
-    Matrix attn_wv;
-    Matrix attn_wo;
-    Matrix mlp_fc1;
-    Matrix mlp_fc2;
-
-    LayerParams() = default;
-
-    LayerParams(const HyperParams& hp, std::mt19937& rng)
-        : attn_wq(hp.n_embd, hp.n_embd, 0.02f, rng),
-          attn_wk(hp.n_embd, hp.n_embd, 0.02f, rng),
-          attn_wv(hp.n_embd, hp.n_embd, 0.02f, rng),
-          attn_wo(hp.n_embd, hp.n_embd, 0.0f, rng),
-          mlp_fc1(4 * hp.n_embd, hp.n_embd, 0.02f, rng),
-          mlp_fc2(hp.n_embd, 4 * hp.n_embd, 0.0f, rng) {}
-};
-
-struct Model {
-    HyperParams hp;
-    int vocab_size = 0;
-    Matrix wte;
-    Matrix wpe;
-    std::vector<LayerParams> layers;
-
-    Model(int vocab_size_, const HyperParams& hp_, std::mt19937& rng)
-        : hp(hp_),
-          vocab_size(vocab_size_),
-          wte(vocab_size_, hp_.n_embd, 0.02f, rng),
-          wpe(hp_.block_size, hp_.n_embd, 0.02f, rng) {
-        layers.reserve(hp.n_layer);
-        for (int i = 0; i < hp.n_layer; ++i) {
-            layers.emplace_back(hp, rng);
-        }
-    }
-
-    template <typename Fn>
-    void for_each_matrix(Fn&& fn) {
-        fn(wte);
-        fn(wpe);
-        for (LayerParams& layer : layers) {
-            fn(layer.attn_wq);
-            fn(layer.attn_wk);
-            fn(layer.attn_wv);
-            fn(layer.attn_wo);
-            fn(layer.mlp_fc1);
-            fn(layer.mlp_fc2);
-        }
-    }
-
-    template <typename Fn>
-    void for_each_matrix(Fn&& fn) const {
-        fn(wte);
-        fn(wpe);
-        for (const LayerParams& layer : layers) {
-            fn(layer.attn_wq);
-            fn(layer.attn_wk);
-            fn(layer.attn_wv);
-            fn(layer.attn_wo);
-            fn(layer.mlp_fc1);
-            fn(layer.mlp_fc2);
-        }
-    }
-
-    void zero_grads() {
-        for_each_matrix([](Matrix& mat) {
-            std::fill(mat.g.begin(), mat.g.end(), 0.0f);
-        });
-    }
-
-    size_t num_params() const {
-        size_t n = 0;
-        for_each_matrix([&](const Matrix& mat) { n += mat.w.size(); });
-        return n;
-    }
-};
-
 struct DataBundle {
     std::vector<std::string> docs;
     std::vector<std::string> train_docs;
@@ -168,259 +63,310 @@ struct DataBundle {
     int bos = 0;
 };
 
-struct LayerStepCache {
-    std::vector<float> x_resid_attn;
-    std::vector<float> x_norm1;
-    float inv_rms1 = 0.0f;
+template <typename T>
+class DeviceBuffer {
+public:
+    DeviceBuffer() = default;
+    explicit DeviceBuffer(size_t n) { resize(n); }
 
-    std::vector<float> q;
-    std::vector<float> k;
-    std::vector<float> v;
-    std::vector<std::vector<float>> attn_weights;
-
-    std::vector<float> x_attn;
-    std::vector<float> x_after_attn;
-    std::vector<float> x_norm2;
-    float inv_rms2 = 0.0f;
-
-    std::vector<float> fc1_pre;
-    std::vector<float> fc1_act;
-    std::vector<float> x_out;
-
-    LayerStepCache() = default;
-
-    explicit LayerStepCache(const HyperParams& hp)
-        : x_resid_attn(hp.n_embd, 0.0f),
-          x_norm1(hp.n_embd, 0.0f),
-          q(hp.n_embd, 0.0f),
-          k(hp.n_embd, 0.0f),
-          v(hp.n_embd, 0.0f),
-          attn_weights(static_cast<size_t>(hp.n_head)),
-          x_attn(hp.n_embd, 0.0f),
-          x_after_attn(hp.n_embd, 0.0f),
-          x_norm2(hp.n_embd, 0.0f),
-          fc1_pre(4 * hp.n_embd, 0.0f),
-          fc1_act(4 * hp.n_embd, 0.0f),
-          x_out(hp.n_embd, 0.0f) {}
-};
-
-struct StepCache {
-    int token_id = -1;
-    int target_id = -1;
-    std::vector<float> x_tokpos;
-    std::vector<float> x0;
-    float inv_rms0 = 0.0f;
-    std::vector<LayerStepCache> layers;
-    std::vector<float> x_final;
-    std::vector<float> logits;
-    std::vector<float> probs;
-
-    StepCache() = default;
-
-    StepCache(const HyperParams& hp, int vocab_size)
-        : x_tokpos(hp.n_embd, 0.0f),
-          x0(hp.n_embd, 0.0f),
-          layers(),
-          x_final(hp.n_embd, 0.0f),
-          logits(vocab_size, 0.0f),
-          probs(vocab_size, 0.0f) {
-        layers.reserve(hp.n_layer);
-        for (int i = 0; i < hp.n_layer; ++i) {
-            layers.emplace_back(hp);
+    ~DeviceBuffer() {
+        if (ptr_ != nullptr) {
+            cudaFree(ptr_);
+            ptr_ = nullptr;
         }
     }
+
+    DeviceBuffer(const DeviceBuffer&) = delete;
+    DeviceBuffer& operator=(const DeviceBuffer&) = delete;
+
+    DeviceBuffer(DeviceBuffer&& other) noexcept : ptr_(other.ptr_), size_(other.size_) {
+        other.ptr_ = nullptr;
+        other.size_ = 0;
+    }
+
+    DeviceBuffer& operator=(DeviceBuffer&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        if (ptr_ != nullptr) {
+            cudaFree(ptr_);
+        }
+        ptr_ = other.ptr_;
+        size_ = other.size_;
+        other.ptr_ = nullptr;
+        other.size_ = 0;
+        return *this;
+    }
+
+    void resize(size_t n) {
+        if (n == size_) {
+            return;
+        }
+        if (ptr_ != nullptr) {
+            CUDA_CHECK(cudaFree(ptr_));
+            ptr_ = nullptr;
+        }
+        size_ = n;
+        if (size_ > 0) {
+            CUDA_CHECK(cudaMalloc(&ptr_, sizeof(T) * size_));
+        }
+    }
+
+    void upload(const std::vector<T>& host) {
+        resize(host.size());
+        if (size_ > 0) {
+            CUDA_CHECK(cudaMemcpy(ptr_, host.data(), sizeof(T) * size_, cudaMemcpyHostToDevice));
+        }
+    }
+
+    void upload_raw(const T* host, size_t n) {
+        if (n > size_) {
+            throw std::runtime_error("upload_raw exceeds device buffer size");
+        }
+        if (n > 0) {
+            CUDA_CHECK(cudaMemcpy(ptr_, host, sizeof(T) * n, cudaMemcpyHostToDevice));
+        }
+    }
+
+    void download(std::vector<T>& host) const {
+        host.resize(size_);
+        if (size_ > 0) {
+            CUDA_CHECK(cudaMemcpy(host.data(), ptr_, sizeof(T) * size_, cudaMemcpyDeviceToHost));
+        }
+    }
+
+    void download_raw(T* host, size_t n) const {
+        if (n > size_) {
+            throw std::runtime_error("download_raw exceeds device buffer size");
+        }
+        if (n > 0) {
+            CUDA_CHECK(cudaMemcpy(host, ptr_, sizeof(T) * n, cudaMemcpyDeviceToHost));
+        }
+    }
+
+    void zero() {
+        if (size_ > 0) {
+            CUDA_CHECK(cudaMemset(ptr_, 0, sizeof(T) * size_));
+        }
+    }
+
+    T* data() { return ptr_; }
+    const T* data() const { return ptr_; }
+    size_t size() const { return size_; }
+
+private:
+    T* ptr_ = nullptr;
+    size_t size_ = 0;
 };
 
-struct KVLayerCache {
-    std::vector<std::vector<float>> keys;
-    std::vector<std::vector<float>> values;
+struct ModelPtrs {
+    int vocab_size = 0;
+
+    float* wte = nullptr;
+    float* wpe = nullptr;
+    float* attn_wq = nullptr;
+    float* attn_wk = nullptr;
+    float* attn_wv = nullptr;
+    float* attn_wo = nullptr;
+    float* mlp_fc1 = nullptr;
+    float* mlp_fc2 = nullptr;
+
+    float* g_wte = nullptr;
+    float* g_wpe = nullptr;
+    float* g_attn_wq = nullptr;
+    float* g_attn_wk = nullptr;
+    float* g_attn_wv = nullptr;
+    float* g_attn_wo = nullptr;
+    float* g_mlp_fc1 = nullptr;
+    float* g_mlp_fc2 = nullptr;
+
+    float* m_wte = nullptr;
+    float* m_wpe = nullptr;
+    float* m_attn_wq = nullptr;
+    float* m_attn_wk = nullptr;
+    float* m_attn_wv = nullptr;
+    float* m_attn_wo = nullptr;
+    float* m_mlp_fc1 = nullptr;
+    float* m_mlp_fc2 = nullptr;
+
+    float* v_wte = nullptr;
+    float* v_wpe = nullptr;
+    float* v_attn_wq = nullptr;
+    float* v_attn_wk = nullptr;
+    float* v_attn_wv = nullptr;
+    float* v_attn_wo = nullptr;
+    float* v_mlp_fc1 = nullptr;
+    float* v_mlp_fc2 = nullptr;
 };
 
-__global__ void matvec_kernel(const float* w, const float* x, float* y, int out, int in) {
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row >= out) {
-        return;
-    }
-    float acc = 0.0f;
-    int base = row * in;
-    for (int i = 0; i < in; ++i) {
-        acc += w[base + i] * x[i];
-    }
-    y[row] = acc;
-}
+struct DeviceModel {
+    int vocab_size = 0;
 
-__global__ void matvec_t_kernel(const float* w, const float* dy, float* dx, int out, int in) {
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    if (col >= in) {
-        return;
-    }
-    float acc = 0.0f;
-    for (int row = 0; row < out; ++row) {
-        acc += w[row * in + col] * dy[row];
-    }
-    dx[col] = acc;
-}
+    DeviceBuffer<float> wte;
+    DeviceBuffer<float> wpe;
+    DeviceBuffer<float> attn_wq;
+    DeviceBuffer<float> attn_wk;
+    DeviceBuffer<float> attn_wv;
+    DeviceBuffer<float> attn_wo;
+    DeviceBuffer<float> mlp_fc1;
+    DeviceBuffer<float> mlp_fc2;
 
-__global__ void outer_add_kernel(float* dw, const float* dy, const float* x, int out, int in, float scale) {
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    if (row >= out || col >= in) {
-        return;
-    }
-    dw[row * in + col] += (dy[row] * x[col]) * scale;
-}
+    DeviceBuffer<float> g_wte;
+    DeviceBuffer<float> g_wpe;
+    DeviceBuffer<float> g_attn_wq;
+    DeviceBuffer<float> g_attn_wk;
+    DeviceBuffer<float> g_attn_wv;
+    DeviceBuffer<float> g_attn_wo;
+    DeviceBuffer<float> g_mlp_fc1;
+    DeviceBuffer<float> g_mlp_fc2;
 
-__global__ void adamw_kernel(
-    float* w,
-    float* g,
-    float* m,
-    float* v,
-    int n,
-    float lr,
-    float beta1,
-    float beta2,
-    float eps,
-    float weight_decay,
-    float one_minus_b1_prod,
-    float one_minus_b2_prod,
-    float grad_scale) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) {
-        return;
-    }
-    float grad = g[idx] * grad_scale;
-    float mi = beta1 * m[idx] + (1.0f - beta1) * grad;
-    float vi = beta2 * v[idx] + (1.0f - beta2) * grad * grad;
-    m[idx] = mi;
-    v[idx] = vi;
-    float m_hat = mi / one_minus_b1_prod;
-    float v_hat = vi / one_minus_b2_prod;
-    w[idx] -= lr * (m_hat / (sqrtf(v_hat) + eps) + weight_decay * w[idx]);
-    g[idx] = 0.0f;
-}
+    DeviceBuffer<float> m_wte;
+    DeviceBuffer<float> m_wpe;
+    DeviceBuffer<float> m_attn_wq;
+    DeviceBuffer<float> m_attn_wk;
+    DeviceBuffer<float> m_attn_wv;
+    DeviceBuffer<float> m_attn_wo;
+    DeviceBuffer<float> m_mlp_fc1;
+    DeviceBuffer<float> m_mlp_fc2;
 
-class CudaOps {
-public:
-    CudaOps() = default;
-    ~CudaOps() {
-        free_if_needed(d_w_);
-        free_if_needed(d_a_);
-        free_if_needed(d_b_);
-        free_if_needed(d_c_);
-        free_if_needed(d_d_);
-    }
+    DeviceBuffer<float> v_wte;
+    DeviceBuffer<float> v_wpe;
+    DeviceBuffer<float> v_attn_wq;
+    DeviceBuffer<float> v_attn_wk;
+    DeviceBuffer<float> v_attn_wv;
+    DeviceBuffer<float> v_attn_wo;
+    DeviceBuffer<float> v_mlp_fc1;
+    DeviceBuffer<float> v_mlp_fc2;
 
-    void matvec(const float* w, const float* x, float* y, int out, int in) {
-        ensure(d_w_, cap_w_, out * in);
-        ensure(d_a_, cap_a_, in);
-        ensure(d_b_, cap_b_, out);
+    DeviceModel(int vocab, std::mt19937& rng)
+        : vocab_size(vocab),
+          wte(static_cast<size_t>(vocab) * kNEmbd),
+          wpe(static_cast<size_t>(kBlockSize) * kNEmbd),
+          attn_wq(static_cast<size_t>(kNEmbd) * kNEmbd),
+          attn_wk(static_cast<size_t>(kNEmbd) * kNEmbd),
+          attn_wv(static_cast<size_t>(kNEmbd) * kNEmbd),
+          attn_wo(static_cast<size_t>(kNEmbd) * kNEmbd),
+          mlp_fc1(static_cast<size_t>(kFcDim) * kNEmbd),
+          mlp_fc2(static_cast<size_t>(kNEmbd) * kFcDim),
+          g_wte(static_cast<size_t>(vocab) * kNEmbd),
+          g_wpe(static_cast<size_t>(kBlockSize) * kNEmbd),
+          g_attn_wq(static_cast<size_t>(kNEmbd) * kNEmbd),
+          g_attn_wk(static_cast<size_t>(kNEmbd) * kNEmbd),
+          g_attn_wv(static_cast<size_t>(kNEmbd) * kNEmbd),
+          g_attn_wo(static_cast<size_t>(kNEmbd) * kNEmbd),
+          g_mlp_fc1(static_cast<size_t>(kFcDim) * kNEmbd),
+          g_mlp_fc2(static_cast<size_t>(kNEmbd) * kFcDim),
+          m_wte(static_cast<size_t>(vocab) * kNEmbd),
+          m_wpe(static_cast<size_t>(kBlockSize) * kNEmbd),
+          m_attn_wq(static_cast<size_t>(kNEmbd) * kNEmbd),
+          m_attn_wk(static_cast<size_t>(kNEmbd) * kNEmbd),
+          m_attn_wv(static_cast<size_t>(kNEmbd) * kNEmbd),
+          m_attn_wo(static_cast<size_t>(kNEmbd) * kNEmbd),
+          m_mlp_fc1(static_cast<size_t>(kFcDim) * kNEmbd),
+          m_mlp_fc2(static_cast<size_t>(kNEmbd) * kFcDim),
+          v_wte(static_cast<size_t>(vocab) * kNEmbd),
+          v_wpe(static_cast<size_t>(kBlockSize) * kNEmbd),
+          v_attn_wq(static_cast<size_t>(kNEmbd) * kNEmbd),
+          v_attn_wk(static_cast<size_t>(kNEmbd) * kNEmbd),
+          v_attn_wv(static_cast<size_t>(kNEmbd) * kNEmbd),
+          v_attn_wo(static_cast<size_t>(kNEmbd) * kNEmbd),
+          v_mlp_fc1(static_cast<size_t>(kFcDim) * kNEmbd),
+          v_mlp_fc2(static_cast<size_t>(kNEmbd) * kFcDim) {
+        init_matrix(wte, 0.02f, rng);
+        init_matrix(wpe, 0.02f, rng);
+        init_matrix(attn_wq, 0.02f, rng);
+        init_matrix(attn_wk, 0.02f, rng);
+        init_matrix(attn_wv, 0.02f, rng);
+        init_matrix(attn_wo, 0.0f, rng);
+        init_matrix(mlp_fc1, 0.02f, rng);
+        init_matrix(mlp_fc2, 0.0f, rng);
 
-        CUDA_CHECK(cudaMemcpy(d_w_, w, sizeof(float) * out * in, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_a_, x, sizeof(float) * in, cudaMemcpyHostToDevice));
+        g_wte.zero();
+        g_wpe.zero();
+        g_attn_wq.zero();
+        g_attn_wk.zero();
+        g_attn_wv.zero();
+        g_attn_wo.zero();
+        g_mlp_fc1.zero();
+        g_mlp_fc2.zero();
 
-        int threads = 256;
-        int blocks = (out + threads - 1) / threads;
-        matvec_kernel<<<blocks, threads>>>(d_w_, d_a_, d_b_, out, in);
-        CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaMemcpy(y, d_b_, sizeof(float) * out, cudaMemcpyDeviceToHost));
-    }
+        m_wte.zero();
+        m_wpe.zero();
+        m_attn_wq.zero();
+        m_attn_wk.zero();
+        m_attn_wv.zero();
+        m_attn_wo.zero();
+        m_mlp_fc1.zero();
+        m_mlp_fc2.zero();
 
-    void matvec_t(const float* w, const float* dy, float* dx, int out, int in) {
-        ensure(d_w_, cap_w_, out * in);
-        ensure(d_a_, cap_a_, out);
-        ensure(d_b_, cap_b_, in);
-
-        CUDA_CHECK(cudaMemcpy(d_w_, w, sizeof(float) * out * in, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_a_, dy, sizeof(float) * out, cudaMemcpyHostToDevice));
-
-        int threads = 256;
-        int blocks = (in + threads - 1) / threads;
-        matvec_t_kernel<<<blocks, threads>>>(d_w_, d_a_, d_b_, out, in);
-        CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaMemcpy(dx, d_b_, sizeof(float) * in, cudaMemcpyDeviceToHost));
-    }
-
-    void outer_add(float* dw, const float* dy, const float* x, int out, int in, float scale) {
-        ensure(d_w_, cap_w_, out * in);
-        ensure(d_a_, cap_a_, out);
-        ensure(d_b_, cap_b_, in);
-
-        CUDA_CHECK(cudaMemcpy(d_w_, dw, sizeof(float) * out * in, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_a_, dy, sizeof(float) * out, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_b_, x, sizeof(float) * in, cudaMemcpyHostToDevice));
-
-        dim3 threads(16, 16);
-        dim3 blocks((in + threads.x - 1) / threads.x, (out + threads.y - 1) / threads.y);
-        outer_add_kernel<<<blocks, threads>>>(d_w_, d_a_, d_b_, out, in, scale);
-        CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaMemcpy(dw, d_w_, sizeof(float) * out * in, cudaMemcpyDeviceToHost));
+        v_wte.zero();
+        v_wpe.zero();
+        v_attn_wq.zero();
+        v_attn_wk.zero();
+        v_attn_wv.zero();
+        v_attn_wo.zero();
+        v_mlp_fc1.zero();
+        v_mlp_fc2.zero();
     }
 
-    void adamw_update(
-        float* w,
-        float* g,
-        float* m,
-        float* v,
-        int n,
-        float lr,
-        float beta1,
-        float beta2,
-        float eps,
-        float weight_decay,
-        float one_minus_b1_prod,
-        float one_minus_b2_prod,
-        float grad_scale) {
-        ensure(d_a_, cap_a_, n);
-        ensure(d_b_, cap_b_, n);
-        ensure(d_c_, cap_c_, n);
-        ensure(d_d_, cap_d_, n);
+    size_t num_params() const {
+        return wte.size() + wpe.size() + attn_wq.size() + attn_wk.size() + attn_wv.size() +
+               attn_wo.size() + mlp_fc1.size() + mlp_fc2.size();
+    }
 
-        CUDA_CHECK(cudaMemcpy(d_a_, w, sizeof(float) * n, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_b_, g, sizeof(float) * n, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_c_, m, sizeof(float) * n, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_d_, v, sizeof(float) * n, cudaMemcpyHostToDevice));
+    ModelPtrs ptrs() {
+        ModelPtrs p;
+        p.vocab_size = vocab_size;
 
-        int threads = 256;
-        int blocks = (n + threads - 1) / threads;
-        adamw_kernel<<<blocks, threads>>>(
-            d_a_, d_b_, d_c_, d_d_, n, lr, beta1, beta2, eps, weight_decay, one_minus_b1_prod,
-            one_minus_b2_prod, grad_scale);
-        CUDA_CHECK(cudaGetLastError());
+        p.wte = wte.data();
+        p.wpe = wpe.data();
+        p.attn_wq = attn_wq.data();
+        p.attn_wk = attn_wk.data();
+        p.attn_wv = attn_wv.data();
+        p.attn_wo = attn_wo.data();
+        p.mlp_fc1 = mlp_fc1.data();
+        p.mlp_fc2 = mlp_fc2.data();
 
-        CUDA_CHECK(cudaMemcpy(w, d_a_, sizeof(float) * n, cudaMemcpyDeviceToHost));
-        CUDA_CHECK(cudaMemcpy(m, d_c_, sizeof(float) * n, cudaMemcpyDeviceToHost));
-        CUDA_CHECK(cudaMemcpy(v, d_d_, sizeof(float) * n, cudaMemcpyDeviceToHost));
-        std::fill(g, g + n, 0.0f);
+        p.g_wte = g_wte.data();
+        p.g_wpe = g_wpe.data();
+        p.g_attn_wq = g_attn_wq.data();
+        p.g_attn_wk = g_attn_wk.data();
+        p.g_attn_wv = g_attn_wv.data();
+        p.g_attn_wo = g_attn_wo.data();
+        p.g_mlp_fc1 = g_mlp_fc1.data();
+        p.g_mlp_fc2 = g_mlp_fc2.data();
+
+        p.m_wte = m_wte.data();
+        p.m_wpe = m_wpe.data();
+        p.m_attn_wq = m_attn_wq.data();
+        p.m_attn_wk = m_attn_wk.data();
+        p.m_attn_wv = m_attn_wv.data();
+        p.m_attn_wo = m_attn_wo.data();
+        p.m_mlp_fc1 = m_mlp_fc1.data();
+        p.m_mlp_fc2 = m_mlp_fc2.data();
+
+        p.v_wte = v_wte.data();
+        p.v_wpe = v_wpe.data();
+        p.v_attn_wq = v_attn_wq.data();
+        p.v_attn_wk = v_attn_wk.data();
+        p.v_attn_wv = v_attn_wv.data();
+        p.v_attn_wo = v_attn_wo.data();
+        p.v_mlp_fc1 = v_mlp_fc1.data();
+        p.v_mlp_fc2 = v_mlp_fc2.data();
+        return p;
     }
 
 private:
-    static void free_if_needed(float*& ptr) {
-        if (ptr != nullptr) {
-            cudaFree(ptr);
-            ptr = nullptr;
+    static void init_matrix(DeviceBuffer<float>& dst, float stddev, std::mt19937& rng) {
+        std::vector<float> host(dst.size(), 0.0f);
+        if (stddev != 0.0f) {
+            std::normal_distribution<float> dist(0.0f, stddev);
+            for (float& x : host) {
+                x = dist(rng);
+            }
         }
+        dst.upload(host);
     }
-
-    static void ensure(float*& ptr, int& cap, int n) {
-        if (cap >= n) {
-            return;
-        }
-        free_if_needed(ptr);
-        CUDA_CHECK(cudaMalloc(&ptr, sizeof(float) * n));
-        cap = n;
-    }
-
-    float* d_w_ = nullptr;
-    float* d_a_ = nullptr;
-    float* d_b_ = nullptr;
-    float* d_c_ = nullptr;
-    float* d_d_ = nullptr;
-
-    int cap_w_ = 0;
-    int cap_a_ = 0;
-    int cap_b_ = 0;
-    int cap_c_ = 0;
-    int cap_d_ = 0;
 };
 
 static std::string trim_copy(const std::string& s) {
@@ -528,498 +474,6 @@ static std::vector<int> encode_doc(
     return tokens;
 }
 
-static void add_inplace(std::vector<float>& dst, const std::vector<float>& src) {
-    if (dst.size() != src.size()) {
-        throw std::runtime_error("add_inplace size mismatch");
-    }
-    for (size_t i = 0; i < dst.size(); ++i) {
-        dst[i] += src[i];
-    }
-}
-
-static void rmsnorm_forward(const std::vector<float>& x, std::vector<float>& y, float& inv_rms) {
-    double ms = 0.0;
-    for (float xi : x) {
-        ms += static_cast<double>(xi) * static_cast<double>(xi);
-    }
-    ms /= static_cast<double>(x.size());
-    inv_rms = 1.0f / std::sqrt(static_cast<float>(ms) + 1e-5f);
-    y.resize(x.size());
-    for (size_t i = 0; i < x.size(); ++i) {
-        y[i] = x[i] * inv_rms;
-    }
-}
-
-static void rmsnorm_backward(
-    const std::vector<float>& x,
-    float inv_rms,
-    const std::vector<float>& dy,
-    std::vector<float>& dx) {
-    if (x.size() != dy.size()) {
-        throw std::runtime_error("rmsnorm_backward size mismatch");
-    }
-    double dot = 0.0;
-    for (size_t i = 0; i < x.size(); ++i) {
-        dot += static_cast<double>(dy[i]) * static_cast<double>(x[i]);
-    }
-    float coeff = (inv_rms * inv_rms * inv_rms) / static_cast<float>(x.size());
-    dx.resize(x.size());
-    for (size_t i = 0; i < x.size(); ++i) {
-        dx[i] = dy[i] * inv_rms - x[i] * static_cast<float>(dot) * coeff;
-    }
-}
-
-static void stable_softmax(const std::vector<float>& logits, std::vector<float>& probs) {
-    float mx = *std::max_element(logits.begin(), logits.end());
-    probs.resize(logits.size());
-    double sum_exp = 0.0;
-    for (size_t i = 0; i < logits.size(); ++i) {
-        probs[i] = std::exp(logits[i] - mx);
-        sum_exp += probs[i];
-    }
-    float inv = 1.0f / static_cast<float>(sum_exp);
-    for (float& p : probs) {
-        p *= inv;
-    }
-}
-
-static float cross_entropy_with_probs(const std::vector<float>& logits, int target_id, std::vector<float>& probs) {
-    float mx = *std::max_element(logits.begin(), logits.end());
-    double sum_exp = 0.0;
-    for (float l : logits) {
-        sum_exp += std::exp(l - mx);
-    }
-    stable_softmax(logits, probs);
-    return -(logits[target_id] - mx - std::log(sum_exp));
-}
-
-static void cross_entropy_grad(
-    const std::vector<float>& probs,
-    int target_id,
-    float scale,
-    std::vector<float>& dlogits) {
-    dlogits = probs;
-    for (float& v : dlogits) {
-        v *= scale;
-    }
-    dlogits[target_id] -= scale;
-}
-
-static void linear_forward(
-    const Matrix& mat,
-    const std::vector<float>& x,
-    std::vector<float>& y,
-    CudaOps& cuda) {
-    if (static_cast<int>(x.size()) != mat.cols) {
-        throw std::runtime_error("linear_forward size mismatch");
-    }
-    y.resize(mat.rows);
-    cuda.matvec(mat.w.data(), x.data(), y.data(), mat.rows, mat.cols);
-}
-
-static void linear_backward(
-    Matrix& mat,
-    const std::vector<float>& x,
-    const std::vector<float>& dy,
-    std::vector<float>& dx,
-    CudaOps& cuda) {
-    if (static_cast<int>(x.size()) != mat.cols || static_cast<int>(dy.size()) != mat.rows) {
-        throw std::runtime_error("linear_backward size mismatch");
-    }
-    cuda.outer_add(mat.g.data(), dy.data(), x.data(), mat.rows, mat.cols, 1.0f);
-    dx.resize(mat.cols);
-    cuda.matvec_t(mat.w.data(), dy.data(), dx.data(), mat.rows, mat.cols);
-}
-
-static float forward_train_sequence(
-    const Model& model,
-    const std::vector<int>& tokens,
-    int n,
-    std::vector<StepCache>& steps,
-    CudaOps& cuda) {
-    const HyperParams& hp = model.hp;
-    steps.clear();
-    steps.reserve(static_cast<size_t>(n));
-    float total_loss = 0.0f;
-
-    for (int pos = 0; pos < n; ++pos) {
-        steps.emplace_back(hp, model.vocab_size);
-        StepCache& sc = steps.back();
-        sc.token_id = tokens[static_cast<size_t>(pos)];
-        sc.target_id = tokens[static_cast<size_t>(pos + 1)];
-
-        for (int i = 0; i < hp.n_embd; ++i) {
-            sc.x_tokpos[static_cast<size_t>(i)] =
-                model.wte.w[static_cast<size_t>(sc.token_id) * hp.n_embd + i] +
-                model.wpe.w[static_cast<size_t>(pos) * hp.n_embd + i];
-        }
-        rmsnorm_forward(sc.x_tokpos, sc.x0, sc.inv_rms0);
-
-        std::vector<float> x = sc.x0;
-        for (int li = 0; li < hp.n_layer; ++li) {
-            LayerStepCache& lc = sc.layers[static_cast<size_t>(li)];
-            const LayerParams& layer = model.layers[static_cast<size_t>(li)];
-
-            lc.x_resid_attn = x;
-            rmsnorm_forward(lc.x_resid_attn, lc.x_norm1, lc.inv_rms1);
-
-            linear_forward(layer.attn_wq, lc.x_norm1, lc.q, cuda);
-            linear_forward(layer.attn_wk, lc.x_norm1, lc.k, cuda);
-            linear_forward(layer.attn_wv, lc.x_norm1, lc.v, cuda);
-
-            std::fill(lc.x_attn.begin(), lc.x_attn.end(), 0.0f);
-            for (int h = 0; h < hp.n_head; ++h) {
-                int hs = h * hp.head_dim;
-                std::vector<float> attn_logits(static_cast<size_t>(pos + 1), 0.0f);
-                for (int t = 0; t <= pos; ++t) {
-                    const std::vector<float>& k_t =
-                        (t == pos) ? lc.k : steps[static_cast<size_t>(t)].layers[static_cast<size_t>(li)].k;
-                    float dot = 0.0f;
-                    for (int j = 0; j < hp.head_dim; ++j) {
-                        dot += lc.q[static_cast<size_t>(hs + j)] * k_t[static_cast<size_t>(hs + j)];
-                    }
-                    attn_logits[static_cast<size_t>(t)] = dot / std::sqrt(static_cast<float>(hp.head_dim));
-                }
-
-                std::vector<float> attn_weights;
-                stable_softmax(attn_logits, attn_weights);
-                lc.attn_weights[static_cast<size_t>(h)] = attn_weights;
-
-                for (int j = 0; j < hp.head_dim; ++j) {
-                    float v_sum = 0.0f;
-                    for (int t = 0; t <= pos; ++t) {
-                        const std::vector<float>& v_t =
-                            (t == pos) ? lc.v : steps[static_cast<size_t>(t)].layers[static_cast<size_t>(li)].v;
-                        v_sum += attn_weights[static_cast<size_t>(t)] * v_t[static_cast<size_t>(hs + j)];
-                    }
-                    lc.x_attn[static_cast<size_t>(hs + j)] = v_sum;
-                }
-            }
-
-            std::vector<float> wo_out;
-            linear_forward(layer.attn_wo, lc.x_attn, wo_out, cuda);
-            for (int i = 0; i < hp.n_embd; ++i) {
-                lc.x_after_attn[static_cast<size_t>(i)] =
-                    wo_out[static_cast<size_t>(i)] + lc.x_resid_attn[static_cast<size_t>(i)];
-            }
-
-            rmsnorm_forward(lc.x_after_attn, lc.x_norm2, lc.inv_rms2);
-            linear_forward(layer.mlp_fc1, lc.x_norm2, lc.fc1_pre, cuda);
-            for (size_t i = 0; i < lc.fc1_pre.size(); ++i) {
-                float z = lc.fc1_pre[i];
-                lc.fc1_act[i] = z > 0.0f ? z * z : 0.0f;
-            }
-            std::vector<float> fc2_out;
-            linear_forward(layer.mlp_fc2, lc.fc1_act, fc2_out, cuda);
-            for (int i = 0; i < hp.n_embd; ++i) {
-                lc.x_out[static_cast<size_t>(i)] =
-                    fc2_out[static_cast<size_t>(i)] + lc.x_after_attn[static_cast<size_t>(i)];
-            }
-            x = lc.x_out;
-        }
-
-        sc.x_final = x;
-        linear_forward(model.wte, sc.x_final, sc.logits, cuda);
-        total_loss += cross_entropy_with_probs(sc.logits, sc.target_id, sc.probs);
-    }
-
-    return total_loss / static_cast<float>(n);
-}
-
-static void backward_train_sequence(
-    Model& model,
-    const std::vector<StepCache>& steps,
-    int n,
-    CudaOps& cuda) {
-    const HyperParams& hp = model.hp;
-
-    std::vector<std::vector<std::vector<float>>> dK(
-        static_cast<size_t>(hp.n_layer),
-        std::vector<std::vector<float>>(static_cast<size_t>(n), std::vector<float>(hp.n_embd, 0.0f)));
-    std::vector<std::vector<std::vector<float>>> dV(
-        static_cast<size_t>(hp.n_layer),
-        std::vector<std::vector<float>>(static_cast<size_t>(n), std::vector<float>(hp.n_embd, 0.0f)));
-
-    for (int pos = n - 1; pos >= 0; --pos) {
-        const StepCache& sc = steps[static_cast<size_t>(pos)];
-
-        std::vector<float> dlogits;
-        cross_entropy_grad(sc.probs, sc.target_id, 1.0f / static_cast<float>(n), dlogits);
-
-        std::vector<float> d_x;
-        linear_backward(model.wte, sc.x_final, dlogits, d_x, cuda);
-
-        for (int li = hp.n_layer - 1; li >= 0; --li) {
-            LayerParams& layer = model.layers[static_cast<size_t>(li)];
-            const LayerStepCache& lc = sc.layers[static_cast<size_t>(li)];
-
-            std::vector<float> d_x_after_attn = d_x;
-
-            std::vector<float> d_fc1_act;
-            linear_backward(layer.mlp_fc2, lc.fc1_act, d_x, d_fc1_act, cuda);
-
-            std::vector<float> d_fc1_pre(lc.fc1_pre.size(), 0.0f);
-            for (size_t i = 0; i < d_fc1_pre.size(); ++i) {
-                float z = lc.fc1_pre[i];
-                d_fc1_pre[i] = z > 0.0f ? 2.0f * z * d_fc1_act[i] : 0.0f;
-            }
-
-            std::vector<float> d_x_norm2;
-            linear_backward(layer.mlp_fc1, lc.x_norm2, d_fc1_pre, d_x_norm2, cuda);
-
-            std::vector<float> d_norm2_in;
-            rmsnorm_backward(lc.x_after_attn, lc.inv_rms2, d_x_norm2, d_norm2_in);
-            add_inplace(d_x_after_attn, d_norm2_in);
-
-            std::vector<float> d_x_resid_attn = d_x_after_attn;
-            std::vector<float> d_x_attn;
-            linear_backward(layer.attn_wo, lc.x_attn, d_x_after_attn, d_x_attn, cuda);
-
-            std::vector<float> dq(hp.n_embd, 0.0f);
-            float inv_sqrt_head = 1.0f / std::sqrt(static_cast<float>(hp.head_dim));
-
-            for (int h = 0; h < hp.n_head; ++h) {
-                int hs = h * hp.head_dim;
-                int tlen = pos + 1;
-
-                std::vector<float> dweights(static_cast<size_t>(tlen), 0.0f);
-                for (int t = 0; t <= pos; ++t) {
-                    const std::vector<float>& v_t =
-                        (t == pos) ? lc.v : steps[static_cast<size_t>(t)].layers[static_cast<size_t>(li)].v;
-                    float dot = 0.0f;
-                    for (int j = 0; j < hp.head_dim; ++j) {
-                        dot += d_x_attn[static_cast<size_t>(hs + j)] * v_t[static_cast<size_t>(hs + j)];
-                    }
-                    dweights[static_cast<size_t>(t)] = dot;
-
-                    float wt = lc.attn_weights[static_cast<size_t>(h)][static_cast<size_t>(t)];
-                    for (int j = 0; j < hp.head_dim; ++j) {
-                        dV[static_cast<size_t>(li)][static_cast<size_t>(t)][static_cast<size_t>(hs + j)] +=
-                            wt * d_x_attn[static_cast<size_t>(hs + j)];
-                    }
-                }
-
-                float sum_dw_w = 0.0f;
-                for (int t = 0; t <= pos; ++t) {
-                    float wt = lc.attn_weights[static_cast<size_t>(h)][static_cast<size_t>(t)];
-                    sum_dw_w += dweights[static_cast<size_t>(t)] * wt;
-                }
-
-                for (int t = 0; t <= pos; ++t) {
-                    float wt = lc.attn_weights[static_cast<size_t>(h)][static_cast<size_t>(t)];
-                    float dlogit = wt * (dweights[static_cast<size_t>(t)] - sum_dw_w);
-                    const std::vector<float>& k_t =
-                        (t == pos) ? lc.k : steps[static_cast<size_t>(t)].layers[static_cast<size_t>(li)].k;
-
-                    for (int j = 0; j < hp.head_dim; ++j) {
-                        dq[static_cast<size_t>(hs + j)] +=
-                            dlogit * k_t[static_cast<size_t>(hs + j)] * inv_sqrt_head;
-                        dK[static_cast<size_t>(li)][static_cast<size_t>(t)][static_cast<size_t>(hs + j)] +=
-                            dlogit * lc.q[static_cast<size_t>(hs + j)] * inv_sqrt_head;
-                    }
-                }
-            }
-
-            std::vector<float> d_x_norm1(hp.n_embd, 0.0f);
-            std::vector<float> d_tmp;
-            linear_backward(layer.attn_wq, lc.x_norm1, dq, d_tmp, cuda);
-            add_inplace(d_x_norm1, d_tmp);
-            linear_backward(
-                layer.attn_wk, lc.x_norm1, dK[static_cast<size_t>(li)][static_cast<size_t>(pos)], d_tmp, cuda);
-            add_inplace(d_x_norm1, d_tmp);
-            linear_backward(
-                layer.attn_wv, lc.x_norm1, dV[static_cast<size_t>(li)][static_cast<size_t>(pos)], d_tmp, cuda);
-            add_inplace(d_x_norm1, d_tmp);
-
-            std::vector<float> d_norm1_in;
-            rmsnorm_backward(lc.x_resid_attn, lc.inv_rms1, d_x_norm1, d_norm1_in);
-            d_x = d_x_resid_attn;
-            add_inplace(d_x, d_norm1_in);
-        }
-
-        std::vector<float> d_tokpos;
-        rmsnorm_backward(sc.x_tokpos, sc.inv_rms0, d_x, d_tokpos);
-        float* g_tok = model.wte.g.data() + static_cast<size_t>(sc.token_id) * hp.n_embd;
-        float* g_pos = model.wpe.g.data() + static_cast<size_t>(pos) * hp.n_embd;
-        for (int i = 0; i < hp.n_embd; ++i) {
-            g_tok[i] += d_tokpos[static_cast<size_t>(i)];
-            g_pos[i] += d_tokpos[static_cast<size_t>(i)];
-        }
-    }
-}
-
-static void forward_token_infer(
-    const Model& model,
-    int token_id,
-    int pos_id,
-    std::vector<KVLayerCache>& kv,
-    std::vector<float>& logits,
-    CudaOps& cuda) {
-    const HyperParams& hp = model.hp;
-
-    std::vector<float> x(hp.n_embd, 0.0f);
-    for (int i = 0; i < hp.n_embd; ++i) {
-        x[static_cast<size_t>(i)] =
-            model.wte.w[static_cast<size_t>(token_id) * hp.n_embd + i] +
-            model.wpe.w[static_cast<size_t>(pos_id) * hp.n_embd + i];
-    }
-
-    float inv_rms0 = 0.0f;
-    rmsnorm_forward(x, x, inv_rms0);
-
-    for (int li = 0; li < hp.n_layer; ++li) {
-        LayerParams const& layer = model.layers[static_cast<size_t>(li)];
-        std::vector<float> x_resid_attn = x;
-        std::vector<float> x_norm1;
-        float inv_rms1 = 0.0f;
-        rmsnorm_forward(x_resid_attn, x_norm1, inv_rms1);
-
-        std::vector<float> q;
-        std::vector<float> k;
-        std::vector<float> v;
-        linear_forward(layer.attn_wq, x_norm1, q, cuda);
-        linear_forward(layer.attn_wk, x_norm1, k, cuda);
-        linear_forward(layer.attn_wv, x_norm1, v, cuda);
-
-        kv[static_cast<size_t>(li)].keys.push_back(k);
-        kv[static_cast<size_t>(li)].values.push_back(v);
-
-        std::vector<float> x_attn(hp.n_embd, 0.0f);
-        for (int h = 0; h < hp.n_head; ++h) {
-            int hs = h * hp.head_dim;
-            int tlen = static_cast<int>(kv[static_cast<size_t>(li)].keys.size());
-            std::vector<float> attn_logits(static_cast<size_t>(tlen), 0.0f);
-            for (int t = 0; t < tlen; ++t) {
-                const std::vector<float>& kt = kv[static_cast<size_t>(li)].keys[static_cast<size_t>(t)];
-                float dot = 0.0f;
-                for (int j = 0; j < hp.head_dim; ++j) {
-                    dot += q[static_cast<size_t>(hs + j)] * kt[static_cast<size_t>(hs + j)];
-                }
-                attn_logits[static_cast<size_t>(t)] = dot / std::sqrt(static_cast<float>(hp.head_dim));
-            }
-            std::vector<float> attn_weights;
-            stable_softmax(attn_logits, attn_weights);
-
-            for (int j = 0; j < hp.head_dim; ++j) {
-                float sum_v = 0.0f;
-                for (int t = 0; t < tlen; ++t) {
-                    const std::vector<float>& vt = kv[static_cast<size_t>(li)].values[static_cast<size_t>(t)];
-                    sum_v += attn_weights[static_cast<size_t>(t)] * vt[static_cast<size_t>(hs + j)];
-                }
-                x_attn[static_cast<size_t>(hs + j)] = sum_v;
-            }
-        }
-
-        std::vector<float> wo_out;
-        linear_forward(layer.attn_wo, x_attn, wo_out, cuda);
-        for (int i = 0; i < hp.n_embd; ++i) {
-            x[static_cast<size_t>(i)] = wo_out[static_cast<size_t>(i)] + x_resid_attn[static_cast<size_t>(i)];
-        }
-
-        std::vector<float> x_resid_mlp = x;
-        std::vector<float> x_norm2;
-        float inv_rms2 = 0.0f;
-        rmsnorm_forward(x_resid_mlp, x_norm2, inv_rms2);
-        std::vector<float> fc1_pre;
-        std::vector<float> fc1_act;
-        linear_forward(layer.mlp_fc1, x_norm2, fc1_pre, cuda);
-        fc1_act.resize(fc1_pre.size());
-        for (size_t i = 0; i < fc1_pre.size(); ++i) {
-            float z = fc1_pre[i];
-            fc1_act[i] = z > 0.0f ? z * z : 0.0f;
-        }
-        std::vector<float> fc2_out;
-        linear_forward(layer.mlp_fc2, fc1_act, fc2_out, cuda);
-        for (int i = 0; i < hp.n_embd; ++i) {
-            x[static_cast<size_t>(i)] = fc2_out[static_cast<size_t>(i)] + x_resid_mlp[static_cast<size_t>(i)];
-        }
-    }
-
-    linear_forward(model.wte, x, logits, cuda);
-}
-
-static float grad_norm(const Model& model) {
-    double sum_sq = 0.0;
-    model.for_each_matrix([&](const Matrix& mat) {
-        for (float g : mat.g) {
-            sum_sq += static_cast<double>(g) * static_cast<double>(g);
-        }
-    });
-    return std::sqrt(sum_sq);
-}
-
-static void adamw_update(
-    Model& model,
-    CudaOps& cuda,
-    const TrainConfig& cfg,
-    float lr_t,
-    float b1_prod,
-    float b2_prod,
-    float grad_scale) {
-    float one_minus_b1_prod = 1.0f - b1_prod;
-    float one_minus_b2_prod = 1.0f - b2_prod;
-    model.for_each_matrix([&](Matrix& mat) {
-        cuda.adamw_update(
-            mat.w.data(),
-            mat.g.data(),
-            mat.m.data(),
-            mat.v.data(),
-            static_cast<int>(mat.w.size()),
-            lr_t,
-            cfg.beta1,
-            cfg.beta2,
-            cfg.eps_adam,
-            cfg.weight_decay,
-            one_minus_b1_prod,
-            one_minus_b2_prod,
-            grad_scale);
-    });
-}
-
-static float evaluate_validation(const Model& model, const DataBundle& data, const TrainConfig& cfg, CudaOps& cuda) {
-    if (data.val_docs.empty()) {
-        return std::nanf("");
-    }
-
-    float val_loss = 0.0f;
-    int val_n = 0;
-    int n_docs = std::min(cfg.val_docs, static_cast<int>(data.val_docs.size()));
-
-    for (int i = 0; i < n_docs; ++i) {
-        const std::string& doc = data.val_docs[static_cast<size_t>(i)];
-        std::vector<int> tokens = encode_doc(doc, data.stoi, data.bos);
-        int vn = std::min(model.hp.block_size, static_cast<int>(tokens.size()) - 1);
-        if (vn <= 0) {
-            continue;
-        }
-        std::vector<KVLayerCache> kv(static_cast<size_t>(model.hp.n_layer));
-        for (int pos = 0; pos < vn; ++pos) {
-            std::vector<float> logits;
-            forward_token_infer(
-                model,
-                tokens[static_cast<size_t>(pos)],
-                pos,
-                kv,
-                logits,
-                cuda);
-            int target = tokens[static_cast<size_t>(pos + 1)];
-
-            float mx = *std::max_element(logits.begin(), logits.end());
-            double sum_exp = 0.0;
-            for (float l : logits) {
-                sum_exp += std::exp(l - mx);
-            }
-            val_loss -= logits[static_cast<size_t>(target)] - mx - std::log(sum_exp);
-            ++val_n;
-        }
-    }
-
-    if (val_n == 0) {
-        return std::nanf("");
-    }
-    return val_loss / static_cast<float>(val_n);
-}
-
 static int sample_top_k(
     const std::vector<float>& logits,
     int top_k,
@@ -1096,24 +550,706 @@ static TrainConfig parse_args(int argc, char** argv) {
     }
     return cfg;
 }
+__device__ inline void d_vec_copy(const float* src, float* dst, int n) {
+    for (int i = 0; i < n; ++i) {
+        dst[i] = src[i];
+    }
+}
 
-int main(int argc, char** argv) {
-    try {
-        TrainConfig cfg = parse_args(argc, argv);
-        HyperParams hp;
-        hp.head_dim = hp.n_embd / hp.n_head;
-        if (hp.n_embd % hp.n_head != 0) {
-            throw std::runtime_error("n_embd must be divisible by n_head");
+__device__ inline void d_vec_add_inplace(float* dst, const float* src, int n) {
+    for (int i = 0; i < n; ++i) {
+        dst[i] += src[i];
+    }
+}
+
+__device__ inline void d_matvec(const float* w, const float* x, float* y, int out, int in) {
+    for (int row = 0; row < out; ++row) {
+        float acc = 0.0f;
+        int base = row * in;
+        for (int col = 0; col < in; ++col) {
+            acc += w[base + col] * x[col];
+        }
+        y[row] = acc;
+    }
+}
+
+__device__ inline void d_matvec_t(const float* w, const float* dy, float* dx, int out, int in) {
+    for (int col = 0; col < in; ++col) {
+        float acc = 0.0f;
+        for (int row = 0; row < out; ++row) {
+            acc += w[row * in + col] * dy[row];
+        }
+        dx[col] = acc;
+    }
+}
+
+__device__ inline void d_outer_add(float* dw, const float* dy, const float* x, int out, int in) {
+    for (int row = 0; row < out; ++row) {
+        int base = row * in;
+        for (int col = 0; col < in; ++col) {
+            dw[base + col] += dy[row] * x[col];
+        }
+    }
+}
+
+__device__ inline void d_linear_backward(
+    const float* w,
+    float* dw,
+    int out,
+    int in,
+    const float* x,
+    const float* dy,
+    float* dx) {
+    d_outer_add(dw, dy, x, out, in);
+    d_matvec_t(w, dy, dx, out, in);
+}
+
+__device__ inline void d_rmsnorm_forward(const float* x, float* y, float* inv_rms, int n) {
+    float ms = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        ms += x[i] * x[i];
+    }
+    ms /= static_cast<float>(n);
+    *inv_rms = rsqrtf(ms + 1e-5f);
+    for (int i = 0; i < n; ++i) {
+        y[i] = x[i] * (*inv_rms);
+    }
+}
+
+__device__ inline void d_rmsnorm_backward(
+    const float* x,
+    float inv_rms,
+    const float* dy,
+    float* dx,
+    int n) {
+    float dot = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        dot += dy[i] * x[i];
+    }
+    float coeff = (inv_rms * inv_rms * inv_rms) / static_cast<float>(n);
+    for (int i = 0; i < n; ++i) {
+        dx[i] = dy[i] * inv_rms - x[i] * dot * coeff;
+    }
+}
+
+__device__ inline void d_softmax(const float* logits, int n, float* probs) {
+    float mx = logits[0];
+    for (int i = 1; i < n; ++i) {
+        if (logits[i] > mx) {
+            mx = logits[i];
+        }
+    }
+    float sum_exp = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        probs[i] = expf(logits[i] - mx);
+        sum_exp += probs[i];
+    }
+    float inv = 1.0f / sum_exp;
+    for (int i = 0; i < n; ++i) {
+        probs[i] *= inv;
+    }
+}
+
+__device__ inline float d_cross_entropy_with_probs(const float* logits, int vocab, int target, float* probs) {
+    float mx = logits[0];
+    for (int i = 1; i < vocab; ++i) {
+        if (logits[i] > mx) {
+            mx = logits[i];
+        }
+    }
+
+    float sum_exp = 0.0f;
+    for (int i = 0; i < vocab; ++i) {
+        probs[i] = expf(logits[i] - mx);
+        sum_exp += probs[i];
+    }
+    float inv = 1.0f / sum_exp;
+    for (int i = 0; i < vocab; ++i) {
+        probs[i] *= inv;
+    }
+
+    return -(logits[target] - mx - logf(sum_exp));
+}
+
+__device__ inline void d_zero(float* x, int n) {
+    for (int i = 0; i < n; ++i) {
+        x[i] = 0.0f;
+    }
+}
+
+__device__ inline void d_adamw_array(
+    float* w,
+    float* g,
+    float* m,
+    float* v,
+    int n,
+    float lr,
+    float beta1,
+    float beta2,
+    float eps,
+    float weight_decay,
+    float one_minus_b1_prod,
+    float one_minus_b2_prod,
+    float grad_scale) {
+    for (int i = 0; i < n; ++i) {
+        float grad = g[i] * grad_scale;
+        float mi = beta1 * m[i] + (1.0f - beta1) * grad;
+        float vi = beta2 * v[i] + (1.0f - beta2) * grad * grad;
+        m[i] = mi;
+        v[i] = vi;
+        float m_hat = mi / one_minus_b1_prod;
+        float v_hat = vi / one_minus_b2_prod;
+        w[i] -= lr * (m_hat / (sqrtf(v_hat) + eps) + weight_decay * w[i]);
+        g[i] = 0.0f;
+    }
+}
+
+__global__ void train_step_kernel(
+    ModelPtrs model,
+    const int* tokens,
+    int n,
+    float lr_t,
+    float beta1,
+    float beta2,
+    float eps_adam,
+    float weight_decay,
+    float b1_prod,
+    float b2_prod,
+    float max_grad_norm,
+    float* out_loss,
+    float* out_grad_norm) {
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+
+    if (n <= 0 || n > kBlockSize || model.vocab_size <= 0 || model.vocab_size > kMaxVocab) {
+        out_loss[0] = nanf("");
+        out_grad_norm[0] = nanf("");
+        return;
+    }
+
+    const int vocab = model.vocab_size;
+    const float inv_sqrt_head = 1.0f / sqrtf(static_cast<float>(kHeadDim));
+
+    const int wte_size = vocab * kNEmbd;
+    const int wpe_size = kBlockSize * kNEmbd;
+    const int attn_size = kNEmbd * kNEmbd;
+    const int fc1_size = kFcDim * kNEmbd;
+    const int fc2_size = kNEmbd * kFcDim;
+
+    d_zero(model.g_wte, wte_size);
+    d_zero(model.g_wpe, wpe_size);
+    d_zero(model.g_attn_wq, attn_size);
+    d_zero(model.g_attn_wk, attn_size);
+    d_zero(model.g_attn_wv, attn_size);
+    d_zero(model.g_attn_wo, attn_size);
+    d_zero(model.g_mlp_fc1, fc1_size);
+    d_zero(model.g_mlp_fc2, fc2_size);
+
+    float x_tokpos[kBlockSize][kNEmbd];
+    float x0[kBlockSize][kNEmbd];
+    float inv_rms0[kBlockSize];
+
+    float x_resid_attn[kBlockSize][kNEmbd];
+    float x_norm1[kBlockSize][kNEmbd];
+    float inv_rms1[kBlockSize];
+
+    float q[kBlockSize][kNEmbd];
+    float k_cache[kBlockSize][kNEmbd];
+    float v_cache[kBlockSize][kNEmbd];
+    float attn_weights[kBlockSize][kNHead][kBlockSize];
+
+    float x_attn[kBlockSize][kNEmbd];
+    float x_after_attn[kBlockSize][kNEmbd];
+    float x_norm2[kBlockSize][kNEmbd];
+    float inv_rms2[kBlockSize];
+
+    float fc1_pre[kBlockSize][kFcDim];
+    float fc1_act[kBlockSize][kFcDim];
+    float x_out[kBlockSize][kNEmbd];
+    float x_final[kBlockSize][kNEmbd];
+
+    float logits[kBlockSize][kMaxVocab];
+    float probs[kBlockSize][kMaxVocab];
+
+    float total_loss = 0.0f;
+
+    for (int pos = 0; pos < n; ++pos) {
+        int token_id = tokens[pos];
+        int target_id = tokens[pos + 1];
+
+        for (int i = 0; i < kNEmbd; ++i) {
+            x_tokpos[pos][i] =
+                model.wte[token_id * kNEmbd + i] + model.wpe[pos * kNEmbd + i];
+        }
+        d_rmsnorm_forward(x_tokpos[pos], x0[pos], &inv_rms0[pos], kNEmbd);
+
+        d_vec_copy(x0[pos], x_resid_attn[pos], kNEmbd);
+        d_rmsnorm_forward(x_resid_attn[pos], x_norm1[pos], &inv_rms1[pos], kNEmbd);
+
+        d_matvec(model.attn_wq, x_norm1[pos], q[pos], kNEmbd, kNEmbd);
+        d_matvec(model.attn_wk, x_norm1[pos], k_cache[pos], kNEmbd, kNEmbd);
+        d_matvec(model.attn_wv, x_norm1[pos], v_cache[pos], kNEmbd, kNEmbd);
+
+        d_zero(x_attn[pos], kNEmbd);
+        for (int h = 0; h < kNHead; ++h) {
+            int hs = h * kHeadDim;
+            float attn_logits[kBlockSize];
+            for (int t = 0; t <= pos; ++t) {
+                float dot = 0.0f;
+                for (int j = 0; j < kHeadDim; ++j) {
+                    dot += q[pos][hs + j] * k_cache[t][hs + j];
+                }
+                attn_logits[t] = dot * inv_sqrt_head;
+            }
+            d_softmax(attn_logits, pos + 1, &attn_weights[pos][h][0]);
+
+            for (int j = 0; j < kHeadDim; ++j) {
+                float sum_v = 0.0f;
+                for (int t = 0; t <= pos; ++t) {
+                    sum_v += attn_weights[pos][h][t] * v_cache[t][hs + j];
+                }
+                x_attn[pos][hs + j] = sum_v;
+            }
         }
 
+        float wo_out[kNEmbd];
+        d_matvec(model.attn_wo, x_attn[pos], wo_out, kNEmbd, kNEmbd);
+        for (int i = 0; i < kNEmbd; ++i) {
+            x_after_attn[pos][i] = wo_out[i] + x_resid_attn[pos][i];
+        }
+
+        d_rmsnorm_forward(x_after_attn[pos], x_norm2[pos], &inv_rms2[pos], kNEmbd);
+        d_matvec(model.mlp_fc1, x_norm2[pos], fc1_pre[pos], kFcDim, kNEmbd);
+        for (int i = 0; i < kFcDim; ++i) {
+            float z = fc1_pre[pos][i];
+            fc1_act[pos][i] = z > 0.0f ? z * z : 0.0f;
+        }
+        float fc2_out[kNEmbd];
+        d_matvec(model.mlp_fc2, fc1_act[pos], fc2_out, kNEmbd, kFcDim);
+        for (int i = 0; i < kNEmbd; ++i) {
+            x_out[pos][i] = fc2_out[i] + x_after_attn[pos][i];
+            x_final[pos][i] = x_out[pos][i];
+        }
+
+        d_matvec(model.wte, x_final[pos], logits[pos], vocab, kNEmbd);
+        total_loss += d_cross_entropy_with_probs(logits[pos], vocab, target_id, probs[pos]);
+    }
+
+    const float loss = total_loss / static_cast<float>(n);
+
+    float dK[kBlockSize][kNEmbd];
+    float dV[kBlockSize][kNEmbd];
+    for (int t = 0; t < n; ++t) {
+        d_zero(dK[t], kNEmbd);
+        d_zero(dV[t], kNEmbd);
+    }
+
+    const float inv_n = 1.0f / static_cast<float>(n);
+
+    for (int pos = n - 1; pos >= 0; --pos) {
+        int token_id = tokens[pos];
+        int target_id = tokens[pos + 1];
+
+        float dlogits[kMaxVocab];
+        for (int i = 0; i < vocab; ++i) {
+            dlogits[i] = probs[pos][i] * inv_n;
+        }
+        dlogits[target_id] -= inv_n;
+
+        float d_x[kNEmbd];
+        d_linear_backward(model.wte, model.g_wte, vocab, kNEmbd, x_final[pos], dlogits, d_x);
+
+        float d_x_after_attn[kNEmbd];
+        d_vec_copy(d_x, d_x_after_attn, kNEmbd);
+
+        float d_fc1_act[kFcDim];
+        d_linear_backward(model.mlp_fc2, model.g_mlp_fc2, kNEmbd, kFcDim, fc1_act[pos], d_x, d_fc1_act);
+
+        float d_fc1_pre[kFcDim];
+        for (int i = 0; i < kFcDim; ++i) {
+            float z = fc1_pre[pos][i];
+            d_fc1_pre[i] = z > 0.0f ? 2.0f * z * d_fc1_act[i] : 0.0f;
+        }
+
+        float d_x_norm2[kNEmbd];
+        d_linear_backward(model.mlp_fc1, model.g_mlp_fc1, kFcDim, kNEmbd, x_norm2[pos], d_fc1_pre, d_x_norm2);
+
+        float d_norm2_in[kNEmbd];
+        d_rmsnorm_backward(x_after_attn[pos], inv_rms2[pos], d_x_norm2, d_norm2_in, kNEmbd);
+        d_vec_add_inplace(d_x_after_attn, d_norm2_in, kNEmbd);
+
+        float d_x_resid_attn[kNEmbd];
+        d_vec_copy(d_x_after_attn, d_x_resid_attn, kNEmbd);
+
+        float d_x_attn[kNEmbd];
+        d_linear_backward(model.attn_wo, model.g_attn_wo, kNEmbd, kNEmbd, x_attn[pos], d_x_after_attn, d_x_attn);
+
+        float dq[kNEmbd];
+        d_zero(dq, kNEmbd);
+
+        for (int h = 0; h < kNHead; ++h) {
+            int hs = h * kHeadDim;
+            float dweights[kBlockSize];
+            for (int t = 0; t <= pos; ++t) {
+                float dot = 0.0f;
+                for (int j = 0; j < kHeadDim; ++j) {
+                    dot += d_x_attn[hs + j] * v_cache[t][hs + j];
+                }
+                dweights[t] = dot;
+
+                float wt = attn_weights[pos][h][t];
+                for (int j = 0; j < kHeadDim; ++j) {
+                    dV[t][hs + j] += wt * d_x_attn[hs + j];
+                }
+            }
+
+            float sum_dw_w = 0.0f;
+            for (int t = 0; t <= pos; ++t) {
+                sum_dw_w += dweights[t] * attn_weights[pos][h][t];
+            }
+
+            for (int t = 0; t <= pos; ++t) {
+                float wt = attn_weights[pos][h][t];
+                float dlogit = wt * (dweights[t] - sum_dw_w);
+                for (int j = 0; j < kHeadDim; ++j) {
+                    dq[hs + j] += dlogit * k_cache[t][hs + j] * inv_sqrt_head;
+                    dK[t][hs + j] += dlogit * q[pos][hs + j] * inv_sqrt_head;
+                }
+            }
+        }
+
+        float d_x_norm1[kNEmbd];
+        d_zero(d_x_norm1, kNEmbd);
+        float d_tmp[kNEmbd];
+
+        d_linear_backward(model.attn_wq, model.g_attn_wq, kNEmbd, kNEmbd, x_norm1[pos], dq, d_tmp);
+        d_vec_add_inplace(d_x_norm1, d_tmp, kNEmbd);
+
+        d_linear_backward(model.attn_wk, model.g_attn_wk, kNEmbd, kNEmbd, x_norm1[pos], dK[pos], d_tmp);
+        d_vec_add_inplace(d_x_norm1, d_tmp, kNEmbd);
+
+        d_linear_backward(model.attn_wv, model.g_attn_wv, kNEmbd, kNEmbd, x_norm1[pos], dV[pos], d_tmp);
+        d_vec_add_inplace(d_x_norm1, d_tmp, kNEmbd);
+
+        float d_norm1_in[kNEmbd];
+        d_rmsnorm_backward(x_resid_attn[pos], inv_rms1[pos], d_x_norm1, d_norm1_in, kNEmbd);
+
+        for (int i = 0; i < kNEmbd; ++i) {
+            d_x[i] = d_x_resid_attn[i] + d_norm1_in[i];
+        }
+
+        float d_tokpos[kNEmbd];
+        d_rmsnorm_backward(x_tokpos[pos], inv_rms0[pos], d_x, d_tokpos, kNEmbd);
+        for (int i = 0; i < kNEmbd; ++i) {
+            model.g_wte[token_id * kNEmbd + i] += d_tokpos[i];
+            model.g_wpe[pos * kNEmbd + i] += d_tokpos[i];
+        }
+    }
+
+    double sum_sq = 0.0;
+    for (int i = 0; i < wte_size; ++i) {
+        double g = model.g_wte[i];
+        sum_sq += g * g;
+    }
+    for (int i = 0; i < wpe_size; ++i) {
+        double g = model.g_wpe[i];
+        sum_sq += g * g;
+    }
+    for (int i = 0; i < attn_size; ++i) {
+        double gq = model.g_attn_wq[i];
+        double gk = model.g_attn_wk[i];
+        double gv = model.g_attn_wv[i];
+        double go = model.g_attn_wo[i];
+        sum_sq += gq * gq + gk * gk + gv * gv + go * go;
+    }
+    for (int i = 0; i < fc1_size; ++i) {
+        double g = model.g_mlp_fc1[i];
+        sum_sq += g * g;
+    }
+    for (int i = 0; i < fc2_size; ++i) {
+        double g = model.g_mlp_fc2[i];
+        sum_sq += g * g;
+    }
+
+    float gnorm = sqrtf(static_cast<float>(sum_sq));
+    float grad_scale = 1.0f;
+    if (gnorm > max_grad_norm) {
+        grad_scale = max_grad_norm / gnorm;
+    }
+
+    float one_minus_b1_prod = 1.0f - b1_prod;
+    float one_minus_b2_prod = 1.0f - b2_prod;
+
+    d_adamw_array(
+        model.wte,
+        model.g_wte,
+        model.m_wte,
+        model.v_wte,
+        wte_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.wpe,
+        model.g_wpe,
+        model.m_wpe,
+        model.v_wpe,
+        wpe_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.attn_wq,
+        model.g_attn_wq,
+        model.m_attn_wq,
+        model.v_attn_wq,
+        attn_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.attn_wk,
+        model.g_attn_wk,
+        model.m_attn_wk,
+        model.v_attn_wk,
+        attn_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.attn_wv,
+        model.g_attn_wv,
+        model.m_attn_wv,
+        model.v_attn_wv,
+        attn_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.attn_wo,
+        model.g_attn_wo,
+        model.m_attn_wo,
+        model.v_attn_wo,
+        attn_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.mlp_fc1,
+        model.g_mlp_fc1,
+        model.m_mlp_fc1,
+        model.v_mlp_fc1,
+        fc1_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.mlp_fc2,
+        model.g_mlp_fc2,
+        model.m_mlp_fc2,
+        model.v_mlp_fc2,
+        fc2_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+
+    out_loss[0] = loss;
+    out_grad_norm[0] = gnorm;
+}
+
+__device__ inline void d_forward_token_logits(
+    ModelPtrs model,
+    const int* tokens,
+    int pos,
+    float k_cache[kBlockSize][kNEmbd],
+    float v_cache[kBlockSize][kNEmbd],
+    float* logits_out) {
+    const float inv_sqrt_head = 1.0f / sqrtf(static_cast<float>(kHeadDim));
+
+    int token_id = tokens[pos];
+    float x[kNEmbd];
+    float x_norm[kNEmbd];
+    float inv_rms = 0.0f;
+
+    for (int i = 0; i < kNEmbd; ++i) {
+        x[i] = model.wte[token_id * kNEmbd + i] + model.wpe[pos * kNEmbd + i];
+    }
+    d_rmsnorm_forward(x, x_norm, &inv_rms, kNEmbd);
+
+    float x_resid_attn[kNEmbd];
+    d_vec_copy(x_norm, x_resid_attn, kNEmbd);
+
+    float x_norm1[kNEmbd];
+    d_rmsnorm_forward(x_resid_attn, x_norm1, &inv_rms, kNEmbd);
+
+    float q[kNEmbd];
+    d_matvec(model.attn_wq, x_norm1, q, kNEmbd, kNEmbd);
+    d_matvec(model.attn_wk, x_norm1, k_cache[pos], kNEmbd, kNEmbd);
+    d_matvec(model.attn_wv, x_norm1, v_cache[pos], kNEmbd, kNEmbd);
+
+    float x_attn[kNEmbd];
+    d_zero(x_attn, kNEmbd);
+    for (int h = 0; h < kNHead; ++h) {
+        int hs = h * kHeadDim;
+        float attn_logits[kBlockSize];
+        for (int t = 0; t <= pos; ++t) {
+            float dot = 0.0f;
+            for (int j = 0; j < kHeadDim; ++j) {
+                dot += q[hs + j] * k_cache[t][hs + j];
+            }
+            attn_logits[t] = dot * inv_sqrt_head;
+        }
+        float attn_probs[kBlockSize];
+        d_softmax(attn_logits, pos + 1, attn_probs);
+
+        for (int j = 0; j < kHeadDim; ++j) {
+            float sum_v = 0.0f;
+            for (int t = 0; t <= pos; ++t) {
+                sum_v += attn_probs[t] * v_cache[t][hs + j];
+            }
+            x_attn[hs + j] = sum_v;
+        }
+    }
+
+    float wo_out[kNEmbd];
+    d_matvec(model.attn_wo, x_attn, wo_out, kNEmbd, kNEmbd);
+    float x_after_attn[kNEmbd];
+    for (int i = 0; i < kNEmbd; ++i) {
+        x_after_attn[i] = wo_out[i] + x_resid_attn[i];
+    }
+
+    float x_norm2[kNEmbd];
+    d_rmsnorm_forward(x_after_attn, x_norm2, &inv_rms, kNEmbd);
+    float fc1_pre[kFcDim];
+    d_matvec(model.mlp_fc1, x_norm2, fc1_pre, kFcDim, kNEmbd);
+    float fc1_act[kFcDim];
+    for (int i = 0; i < kFcDim; ++i) {
+        float z = fc1_pre[i];
+        fc1_act[i] = z > 0.0f ? z * z : 0.0f;
+    }
+    float fc2_out[kNEmbd];
+    d_matvec(model.mlp_fc2, fc1_act, fc2_out, kNEmbd, kFcDim);
+    float x_out[kNEmbd];
+    for (int i = 0; i < kNEmbd; ++i) {
+        x_out[i] = fc2_out[i] + x_after_attn[i];
+    }
+
+    d_matvec(model.wte, x_out, logits_out, model.vocab_size, kNEmbd);
+}
+
+__global__ void eval_sequence_nll_kernel(ModelPtrs model, const int* tokens, int n, float* out_nll) {
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+
+    if (n <= 0 || n > kBlockSize || model.vocab_size <= 0 || model.vocab_size > kMaxVocab) {
+        out_nll[0] = nanf("");
+        return;
+    }
+
+    float k_cache[kBlockSize][kNEmbd];
+    float v_cache[kBlockSize][kNEmbd];
+    float logits[kMaxVocab];
+    float probs[kMaxVocab];
+
+    float total_nll = 0.0f;
+    for (int pos = 0; pos < n; ++pos) {
+        d_forward_token_logits(model, tokens, pos, k_cache, v_cache, logits);
+        int target = tokens[pos + 1];
+        total_nll += d_cross_entropy_with_probs(logits, model.vocab_size, target, probs);
+    }
+    out_nll[0] = total_nll;
+}
+
+__global__ void forward_last_logits_kernel(ModelPtrs model, const int* tokens, int seq_len, float* out_logits) {
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+
+    if (seq_len <= 0 || seq_len > kBlockSize || model.vocab_size <= 0 || model.vocab_size > kMaxVocab) {
+        for (int i = 0; i < model.vocab_size; ++i) {
+            out_logits[i] = nanf("");
+        }
+        return;
+    }
+
+    float k_cache[kBlockSize][kNEmbd];
+    float v_cache[kBlockSize][kNEmbd];
+    float logits[kMaxVocab];
+
+    for (int pos = 0; pos < seq_len; ++pos) {
+        d_forward_token_logits(model, tokens, pos, k_cache, v_cache, logits);
+    }
+
+    for (int i = 0; i < model.vocab_size; ++i) {
+        out_logits[i] = logits[i];
+    }
+}
+int main(int argc, char** argv) {
+    try {
+        static_assert(kNLayer == 1, "current fused kernels are implemented for n_layer=1");
+
+        TrainConfig cfg = parse_args(argc, argv);
         std::mt19937 rng(cfg.seed);
         DataBundle data = load_data(rng);
+
         if (data.train_docs.empty()) {
             throw std::runtime_error("no training documents after split");
         }
+        if (static_cast<int>(data.itos.size()) > kMaxVocab) {
+            throw std::runtime_error(
+                "vocab size exceeds kMaxVocab. Increase kMaxVocab in microgpt_cuda.cu.");
+        }
 
-        Model model(static_cast<int>(data.itos.size()), hp, rng);
-        CudaOps cuda;
+        DeviceModel model(static_cast<int>(data.itos.size()), rng);
+        ModelPtrs model_ptrs = model.ptrs();
+
+        DeviceBuffer<int> d_tokens(kMaxTokens);
+        DeviceBuffer<float> d_loss(1);
+        DeviceBuffer<float> d_grad_norm(1);
+        DeviceBuffer<float> d_nll(1);
+        DeviceBuffer<float> d_logits(static_cast<size_t>(model.vocab_size));
 
         std::cout << "num docs: " << data.docs.size()
                   << " (train: " << data.train_docs.size()
@@ -1127,29 +1263,40 @@ int main(int argc, char** argv) {
 
         for (int step = 0; step < cfg.num_steps; ++step) {
             auto t0 = std::chrono::high_resolution_clock::now();
+
             const std::string& doc =
                 data.train_docs[static_cast<size_t>(step % static_cast<int>(data.train_docs.size()))];
             std::vector<int> tokens = encode_doc(doc, data.stoi, data.bos);
-            int n = std::min(hp.block_size, static_cast<int>(tokens.size()) - 1);
+            int n = std::min(kBlockSize, static_cast<int>(tokens.size()) - 1);
             if (n <= 0) {
                 continue;
             }
 
-            model.zero_grads();
-            std::vector<StepCache> steps;
-            float loss = forward_train_sequence(model, tokens, n, steps, cuda);
-            backward_train_sequence(model, steps, n, cuda);
-
-            float gnorm = grad_norm(model);
-            float grad_scale = 1.0f;
-            if (gnorm > cfg.max_grad_norm) {
-                grad_scale = cfg.max_grad_norm / gnorm;
-            }
+            d_tokens.upload_raw(tokens.data(), static_cast<size_t>(n + 1));
 
             float lr_t = cfg.learning_rate * 0.5f * (1.0f + std::cos(kPi * step / cfg.num_steps));
             b1_prod *= cfg.beta1;
             b2_prod *= cfg.beta2;
-            adamw_update(model, cuda, cfg, lr_t, b1_prod, b2_prod, grad_scale);
+
+            train_step_kernel<<<1, 1>>>(
+                model_ptrs,
+                d_tokens.data(),
+                n,
+                lr_t,
+                cfg.beta1,
+                cfg.beta2,
+                cfg.eps_adam,
+                cfg.weight_decay,
+                b1_prod,
+                b2_prod,
+                cfg.max_grad_norm,
+                d_loss.data(),
+                d_grad_norm.data());
+            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(cudaDeviceSynchronize());
+
+            float loss = 0.0f;
+            d_loss.download_raw(&loss, 1);
 
             auto t1 = std::chrono::high_resolution_clock::now();
             auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
@@ -1159,31 +1306,63 @@ int main(int argc, char** argv) {
                       << " | " << ms << "ms\n";
 
             if ((step + 1) % cfg.val_every == 0) {
-                float val = evaluate_validation(model, data, cfg, cuda);
-                if (std::isnan(val)) {
-                    std::cout << "  val loss: n/a\n";
+                float val_loss = 0.0f;
+                int val_n = 0;
+                int eval_docs = std::min(cfg.val_docs, static_cast<int>(data.val_docs.size()));
+                for (int i = 0; i < eval_docs; ++i) {
+                    std::vector<int> vt = encode_doc(data.val_docs[static_cast<size_t>(i)], data.stoi, data.bos);
+                    int vn = std::min(kBlockSize, static_cast<int>(vt.size()) - 1);
+                    if (vn <= 0) {
+                        continue;
+                    }
+                    d_tokens.upload_raw(vt.data(), static_cast<size_t>(vn + 1));
+                    eval_sequence_nll_kernel<<<1, 1>>>(model_ptrs, d_tokens.data(), vn, d_nll.data());
+                    CUDA_CHECK(cudaGetLastError());
+                    CUDA_CHECK(cudaDeviceSynchronize());
+
+                    float nll = 0.0f;
+                    d_nll.download_raw(&nll, 1);
+                    val_loss += nll;
+                    val_n += vn;
+                }
+                if (val_n > 0) {
+                    std::cout << "  val loss: " << std::fixed << std::setprecision(4)
+                              << (val_loss / static_cast<float>(val_n)) << "\n";
                 } else {
-                    std::cout << "  val loss: " << std::fixed << std::setprecision(4) << val << "\n";
+                    std::cout << "  val loss: n/a\n";
                 }
             }
         }
 
         std::cout << "\n--- inference ---\n";
+        std::vector<float> host_logits(static_cast<size_t>(model.vocab_size), 0.0f);
         for (int sample_idx = 0; sample_idx < cfg.num_samples; ++sample_idx) {
-            std::vector<KVLayerCache> kv(static_cast<size_t>(hp.n_layer));
-            int token_id = data.bos;
+            std::vector<int> seq;
+            seq.push_back(data.bos);
             std::cout << "sample " << std::setw(2) << (sample_idx + 1) << ": ";
-            for (int pos = 0; pos < hp.block_size; ++pos) {
-                std::vector<float> logits;
-                forward_token_infer(model, token_id, pos, kv, logits, cuda);
-                token_id = sample_top_k(logits, cfg.top_k, cfg.temperature, rng);
+
+            for (int pos = 0; pos < kBlockSize; ++pos) {
+                d_tokens.upload_raw(seq.data(), seq.size());
+                forward_last_logits_kernel<<<1, 1>>>(
+                    model_ptrs,
+                    d_tokens.data(),
+                    static_cast<int>(seq.size()),
+                    d_logits.data());
+                CUDA_CHECK(cudaGetLastError());
+                CUDA_CHECK(cudaDeviceSynchronize());
+
+                d_logits.download_raw(host_logits.data(), host_logits.size());
+                int token_id = sample_top_k(host_logits, cfg.top_k, cfg.temperature, rng);
                 if (token_id == data.bos) {
                     break;
                 }
+
                 std::cout << data.itos[static_cast<size_t>(token_id)];
+                seq.push_back(token_id);
             }
             std::cout << "\n";
         }
+
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

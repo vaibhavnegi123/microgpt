@@ -18,6 +18,12 @@
 #include <utility>
 #include <vector>
 
+/*
+The most atomic way to train and inference a GPT on CUDA.
+This file is the complete fused GPU algorithm.
+Everything else is just efficiency.
+*/
+
 #define CUDA_CHECK(call)                                                                 \
     do {                                                                                 \
         cudaError_t err__ = (call);                                                      \
@@ -28,15 +34,17 @@
         }                                                                                \
     } while (0)
 
-constexpr int kNEmbd = 16;
-constexpr int kNHead = 4;
-constexpr int kNLayer = 1;
-constexpr int kBlockSize = 8;
+// Let there be fixed model geometry, matching microgpt.py exactly.
+constexpr int kNEmbd = 16;           // embedding dimension
+constexpr int kNHead = 4;            // number of attention heads
+constexpr int kNLayer = 1;           // this fused kernel path currently supports one layer
+constexpr int kBlockSize = 8;        // maximum sequence length
 constexpr int kHeadDim = kNEmbd / kNHead;
-constexpr int kFcDim = 4 * kNEmbd;
-constexpr int kMaxVocab = 256;
-constexpr int kMaxTokens = kBlockSize + 1;
+constexpr int kFcDim = 4 * kNEmbd;   // hidden size of the MLP expansion
+constexpr int kMaxVocab = 256;       // hard safety cap for static kernel buffers
+constexpr int kMaxTokens = kBlockSize + 1; // [token_t, ..., token_{t+n}] for next-token targets
 
+// Let there be training knobs, kept numerically aligned with the Python reference.
 struct TrainConfig {
     int num_steps = 500;
     int val_every = 100;
@@ -54,6 +62,7 @@ struct TrainConfig {
     float max_grad_norm = 1.0f;
 };
 
+// Let there be dataset and tokenizer state.
 struct DataBundle {
     std::vector<std::string> docs;
     std::vector<std::string> train_docs;
@@ -63,6 +72,7 @@ struct DataBundle {
     int bos = 0;
 };
 
+// Let there be a tiny RAII wrapper over device memory.
 template <typename T>
 class DeviceBuffer {
 public:
@@ -159,6 +169,7 @@ private:
     size_t size_ = 0;
 };
 
+// Let there be a plain pointer view for passing model buffers into kernels.
 struct ModelPtrs {
     int vocab_size = 0;
 
@@ -199,6 +210,7 @@ struct ModelPtrs {
     float* v_mlp_fc2 = nullptr;
 };
 
+// Let there be parameters and optimizer state resident on the GPU.
 struct DeviceModel {
     int vocab_size = 0;
 
@@ -238,6 +250,7 @@ struct DeviceModel {
     DeviceBuffer<float> v_mlp_fc1;
     DeviceBuffer<float> v_mlp_fc2;
 
+    // Initialize weights with the same random scheme as microgpt.py.
     DeviceModel(int vocab, std::mt19937& rng)
         : vocab_size(vocab),
           wte(static_cast<size_t>(vocab) * kNEmbd),
@@ -272,6 +285,7 @@ struct DeviceModel {
           v_attn_wo(static_cast<size_t>(kNEmbd) * kNEmbd),
           v_mlp_fc1(static_cast<size_t>(kFcDim) * kNEmbd),
           v_mlp_fc2(static_cast<size_t>(kNEmbd) * kFcDim) {
+        // Parameter init: Gaussian(0, 0.02), with selected projections zero-initialized.
         init_matrix(wte, 0.02f, rng);
         init_matrix(wpe, 0.02f, rng);
         init_matrix(attn_wq, 0.02f, rng);
@@ -309,6 +323,7 @@ struct DeviceModel {
         v_mlp_fc2.zero();
     }
 
+    // Count all trainable scalars, for observability parity with microgpt.py.
     size_t num_params() const {
         return wte.size() + wpe.size() + attn_wq.size() + attn_wk.size() + attn_wv.size() +
                attn_wo.size() + mlp_fc1.size() + mlp_fc2.size();
@@ -357,6 +372,7 @@ struct DeviceModel {
     }
 
 private:
+    // Host-side random init, uploaded once; parameters stay device-resident afterward.
     static void init_matrix(DeviceBuffer<float>& dst, float stddev, std::mt19937& rng) {
         std::vector<float> host(dst.size(), 0.0f);
         if (stddev != 0.0f) {
@@ -369,6 +385,7 @@ private:
     }
 };
 
+// Trim a line from the input corpus.
 static std::string trim_copy(const std::string& s) {
     size_t start = 0;
     while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) {
@@ -381,6 +398,7 @@ static std::string trim_copy(const std::string& s) {
     return s.substr(start, end - start);
 }
 
+// Let there be an input dataset file, matching Python behavior on first run.
 static void ensure_input_file() {
     namespace fs = std::filesystem;
     if (fs::exists("input.txt")) {
@@ -400,6 +418,7 @@ static void ensure_input_file() {
 #endif
 }
 
+// Load docs, split train/val, and build a character tokenizer with <BOS>.
 static DataBundle load_data(std::mt19937& rng) {
     ensure_input_file();
 
@@ -456,6 +475,7 @@ static DataBundle load_data(std::mt19937& rng) {
     return data;
 }
 
+// Encode one document as [BOS] + chars + [BOS], exactly like microgpt.py.
 static std::vector<int> encode_doc(
     const std::string& doc,
     const std::unordered_map<char, int>& stoi,
@@ -474,6 +494,7 @@ static std::vector<int> encode_doc(
     return tokens;
 }
 
+// Top-k sampling with temperature, used at inference time.
 static int sample_top_k(
     const std::vector<float>& logits,
     int top_k,
@@ -502,6 +523,7 @@ static int sample_top_k(
     return ids[static_cast<size_t>(dist(rng))];
 }
 
+// Parse optional CLI overrides for fast experiments.
 static TrainConfig parse_args(int argc, char** argv) {
     TrainConfig cfg;
     for (int i = 1; i < argc; ++i) {
@@ -550,6 +572,8 @@ static TrainConfig parse_args(int argc, char** argv) {
     }
     return cfg;
 }
+
+// Below live the scalar CUDA building blocks used by fused kernels.
 __device__ inline void d_vec_copy(const float* src, float* dst, int n) {
     for (int i = 0; i < n; ++i) {
         dst[i] = src[i];
@@ -562,6 +586,7 @@ __device__ inline void d_vec_add_inplace(float* dst, const float* src, int n) {
     }
 }
 
+// y = W * x
 __device__ inline void d_matvec(const float* w, const float* x, float* y, int out, int in) {
     for (int row = 0; row < out; ++row) {
         float acc = 0.0f;
@@ -573,6 +598,7 @@ __device__ inline void d_matvec(const float* w, const float* x, float* y, int ou
     }
 }
 
+// dx = W^T * dy
 __device__ inline void d_matvec_t(const float* w, const float* dy, float* dx, int out, int in) {
     for (int col = 0; col < in; ++col) {
         float acc = 0.0f;
@@ -583,6 +609,7 @@ __device__ inline void d_matvec_t(const float* w, const float* dy, float* dx, in
     }
 }
 
+// dW += dy outer x
 __device__ inline void d_outer_add(float* dw, const float* dy, const float* x, int out, int in) {
     for (int row = 0; row < out; ++row) {
         int base = row * in;
@@ -592,6 +619,7 @@ __device__ inline void d_outer_add(float* dw, const float* dy, const float* x, i
     }
 }
 
+// Fused linear backward: accumulate dW and produce dx.
 __device__ inline void d_linear_backward(
     const float* w,
     float* dw,
@@ -604,6 +632,7 @@ __device__ inline void d_linear_backward(
     d_matvec_t(w, dy, dx, out, in);
 }
 
+// RMSNorm forward and backward, matching Python math.
 __device__ inline void d_rmsnorm_forward(const float* x, float* y, float* inv_rms, int n) {
     float ms = 0.0f;
     for (int i = 0; i < n; ++i) {
@@ -632,6 +661,7 @@ __device__ inline void d_rmsnorm_backward(
     }
 }
 
+// Stable softmax and fused CE used throughout train/eval.
 __device__ inline void d_softmax(const float* logits, int n, float* probs) {
     float mx = logits[0];
     for (int i = 1; i < n; ++i) {
@@ -677,6 +707,7 @@ __device__ inline void d_zero(float* x, int n) {
     }
 }
 
+// One-array AdamW update with bias correction and optional grad scaling.
 __device__ inline void d_adamw_array(
     float* w,
     float* g,
@@ -718,6 +749,7 @@ __global__ void train_step_kernel(
     float max_grad_norm,
     float* out_loss,
     float* out_grad_norm) {
+    // Single-thread fused reference kernel: one launch = one full optimizer step.
     if (blockIdx.x != 0 || threadIdx.x != 0) {
         return;
     }
@@ -774,6 +806,7 @@ __global__ void train_step_kernel(
 
     float total_loss = 0.0f;
 
+    // Forward pass over sequence positions: build activations and per-token CE.
     for (int pos = 0; pos < n; ++pos) {
         int token_id = tokens[pos];
         int target_id = tokens[pos + 1];
@@ -784,6 +817,7 @@ __global__ void train_step_kernel(
         }
         d_rmsnorm_forward(x_tokpos[pos], x0[pos], &inv_rms0[pos], kNEmbd);
 
+        // 1) Attention block.
         d_vec_copy(x0[pos], x_resid_attn[pos], kNEmbd);
         d_rmsnorm_forward(x_resid_attn[pos], x_norm1[pos], &inv_rms1[pos], kNEmbd);
 
@@ -819,6 +853,7 @@ __global__ void train_step_kernel(
             x_after_attn[pos][i] = wo_out[i] + x_resid_attn[pos][i];
         }
 
+        // 2) MLP block.
         d_rmsnorm_forward(x_after_attn[pos], x_norm2[pos], &inv_rms2[pos], kNEmbd);
         d_matvec(model.mlp_fc1, x_norm2[pos], fc1_pre[pos], kFcDim, kNEmbd);
         for (int i = 0; i < kFcDim; ++i) {
@@ -847,6 +882,7 @@ __global__ void train_step_kernel(
 
     const float inv_n = 1.0f / static_cast<float>(n);
 
+    // Backward pass through time: reverse sequence order.
     for (int pos = n - 1; pos >= 0; --pos) {
         int token_id = tokens[pos];
         int target_id = tokens[pos + 1];
@@ -860,6 +896,7 @@ __global__ void train_step_kernel(
         float d_x[kNEmbd];
         d_linear_backward(model.wte, model.g_wte, vocab, kNEmbd, x_final[pos], dlogits, d_x);
 
+        // 2) MLP backward.
         float d_x_after_attn[kNEmbd];
         d_vec_copy(d_x, d_x_after_attn, kNEmbd);
 
@@ -879,6 +916,7 @@ __global__ void train_step_kernel(
         d_rmsnorm_backward(x_after_attn[pos], inv_rms2[pos], d_x_norm2, d_norm2_in, kNEmbd);
         d_vec_add_inplace(d_x_after_attn, d_norm2_in, kNEmbd);
 
+        // 1) Attention backward.
         float d_x_resid_attn[kNEmbd];
         d_vec_copy(d_x_after_attn, d_x_resid_attn, kNEmbd);
 
@@ -947,6 +985,7 @@ __global__ void train_step_kernel(
         }
     }
 
+    // Gradient clipping by global norm.
     double sum_sq = 0.0;
     for (int i = 0; i < wte_size; ++i) {
         double g = model.g_wte[i];
@@ -981,6 +1020,7 @@ __global__ void train_step_kernel(
     float one_minus_b1_prod = 1.0f - b1_prod;
     float one_minus_b2_prod = 1.0f - b2_prod;
 
+    // AdamW update for every parameter tensor.
     d_adamw_array(
         model.wte,
         model.g_wte,
@@ -1105,6 +1145,7 @@ __device__ inline void d_forward_token_logits(
     float k_cache[kBlockSize][kNEmbd],
     float v_cache[kBlockSize][kNEmbd],
     float* logits_out) {
+    // Stateless per-token forward, reusing externally provided KV caches.
     const float inv_sqrt_head = 1.0f / sqrtf(static_cast<float>(kHeadDim));
 
     int token_id = tokens[pos];
@@ -1117,6 +1158,7 @@ __device__ inline void d_forward_token_logits(
     }
     d_rmsnorm_forward(x, x_norm, &inv_rms, kNEmbd);
 
+    // 1) Attention block.
     float x_resid_attn[kNEmbd];
     d_vec_copy(x_norm, x_resid_attn, kNEmbd);
 
@@ -1159,6 +1201,7 @@ __device__ inline void d_forward_token_logits(
         x_after_attn[i] = wo_out[i] + x_resid_attn[i];
     }
 
+    // 2) MLP block.
     float x_norm2[kNEmbd];
     d_rmsnorm_forward(x_after_attn, x_norm2, &inv_rms, kNEmbd);
     float fc1_pre[kFcDim];
@@ -1175,10 +1218,12 @@ __device__ inline void d_forward_token_logits(
         x_out[i] = fc2_out[i] + x_after_attn[i];
     }
 
+    // Weight tying: output projection reuses token embedding matrix.
     d_matvec(model.wte, x_out, logits_out, model.vocab_size, kNEmbd);
 }
 
 __global__ void eval_sequence_nll_kernel(ModelPtrs model, const int* tokens, int n, float* out_nll) {
+    // Validation kernel: forward-only NLL accumulation, no gradient work.
     if (blockIdx.x != 0 || threadIdx.x != 0) {
         return;
     }
@@ -1203,6 +1248,7 @@ __global__ void eval_sequence_nll_kernel(ModelPtrs model, const int* tokens, int
 }
 
 __global__ void forward_last_logits_kernel(ModelPtrs model, const int* tokens, int seq_len, float* out_logits) {
+    // Inference kernel: run causal forward, return logits at final position.
     if (blockIdx.x != 0 || threadIdx.x != 0) {
         return;
     }
@@ -1228,8 +1274,10 @@ __global__ void forward_last_logits_kernel(ModelPtrs model, const int* tokens, i
 }
 int main(int argc, char** argv) {
     try {
+        // This fused path is intentionally minimal and currently specialized to one layer.
         static_assert(kNLayer == 1, "current fused kernels are implemented for n_layer=1");
 
+        // Let there be deterministic setup and data loading.
         TrainConfig cfg = parse_args(argc, argv);
         std::mt19937 rng(cfg.seed);
         DataBundle data = load_data(rng);
@@ -1257,10 +1305,12 @@ int main(int argc, char** argv) {
         std::cout << "vocab size: " << data.itos.size() << "\n";
         std::cout << "num params: " << model.num_params() << "\n";
 
+        // Adam running products for bias correction.
         float b1_prod = 1.0f;
         float b2_prod = 1.0f;
         constexpr float kPi = 3.14159265358979323846f;
 
+        // Repeat in sequence: one document per step.
         for (int step = 0; step < cfg.num_steps; ++step) {
             auto t0 = std::chrono::high_resolution_clock::now();
 
@@ -1274,10 +1324,12 @@ int main(int argc, char** argv) {
 
             d_tokens.upload_raw(tokens.data(), static_cast<size_t>(n + 1));
 
+            // Cosine LR schedule, same functional form as microgpt.py.
             float lr_t = cfg.learning_rate * 0.5f * (1.0f + std::cos(kPi * step / cfg.num_steps));
             b1_prod *= cfg.beta1;
             b2_prod *= cfg.beta2;
 
+            // One fused launch performs forward, backward, clipping, and AdamW.
             train_step_kernel<<<1, 1>>>(
                 model_ptrs,
                 d_tokens.data(),
@@ -1305,6 +1357,7 @@ int main(int argc, char** argv) {
                       << " | loss " << std::fixed << std::setprecision(4) << loss
                       << " | " << ms << "ms\n";
 
+            // Periodic validation on held-out docs.
             if ((step + 1) % cfg.val_every == 0) {
                 float val_loss = 0.0f;
                 int val_n = 0;
@@ -1334,6 +1387,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Inference: top-k sampled autoregressive decoding.
         std::cout << "\n--- inference ---\n";
         std::vector<float> host_logits(static_cast<size_t>(model.vocab_size), 0.0f);
         for (int sample_idx = 0; sample_idx < cfg.num_samples; ++sample_idx) {

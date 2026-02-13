@@ -1,459 +1,1968 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>microgpt (optimized)</title>
+<title>microgpt Code Converter</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --line: #21262d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --active: #1f6feb;
+    --ln: #6e7681;
+  }
   body {
-    background: #0d1117;
-    color: #c9d1d9;
-    font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', 'Consolas', 'Courier New', monospace;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "SF Mono", "Fira Code", "Consolas", "Courier New", monospace;
     font-size: 13px;
     line-height: 1.5;
-    overflow-x: hidden;
+    min-height: 100vh;
+  }
+  .wrap {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 14px;
   }
   h1 {
-    text-align: center;
-    padding: 20px 0 4px 0;
-    color: #58a6ff;
     font-size: 24px;
-    font-weight: 600;
-    letter-spacing: 1px;
+    color: var(--accent);
+    text-align: center;
+    margin-bottom: 6px;
   }
   .subtitle {
     text-align: center;
-    color: #8b949e;
+    color: var(--muted);
     font-size: 12px;
-    padding-bottom: 14px;
-    font-style: italic;
+    margin-bottom: 12px;
   }
-  .columns {
+  .toolbar {
     display: flex;
-    gap: 0;
-    padding: 0 8px;
     justify-content: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
   }
-  .column {
-    flex: 1;
-    max-width: 33.33%;
-    min-width: 0;
-    border-right: 1px solid #21262d;
-    padding: 0;
+  .btn {
+    border: 1px solid #30363d;
+    background: #161b22;
+    color: var(--text);
+    padding: 6px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
   }
-  .column:last-child { border-right: none; }
-  pre {
-    margin: 0;
-    padding: 4px 10px;
-    white-space: pre;
-    overflow-x: auto;
-    font-size: 11.5px;
-    line-height: 1.55;
-    tab-size: 4;
+  .btn:hover { border-color: var(--accent); }
+  .btn.active {
+    background: var(--active);
+    border-color: var(--active);
+    color: #fff;
+  }
+  .hint {
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+    margin-bottom: 10px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .panel {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--panel);
+    min-height: 70vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .panel.hidden { display: none; }
+  .panel-header {
+    background: #0f141b;
+    border-bottom: 1px solid var(--line);
+    padding: 8px 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .panel-title {
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .panel-meta {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .code-scroll {
+    overflow: auto;
+    height: 100%;
   }
   .line {
     display: flex;
-    min-height: 18px;
+    border-bottom: 1px solid rgba(33,38,45,0.35);
   }
   .ln {
-    display: inline-block;
-    width: 30px;
-    min-width: 30px;
+    width: 56px;
+    min-width: 56px;
     text-align: right;
-    color: #484f58;
+    color: var(--ln);
+    padding: 0 10px 0 0;
     user-select: none;
-    padding-right: 10px;
-    font-size: 11px;
+    border-right: 1px solid var(--line);
+    background: #0f141b;
   }
   .code {
-    flex: 1;
     white-space: pre;
-    overflow-x: visible;
+    padding: 0 10px;
+    width: 100%;
+    color: var(--text);
   }
-  .comment { color: #8b949e; }
-  .keyword { color: #ff7b72; }
-  .string { color: #a5d6ff; }
-  .func { color: #d2a8ff; }
-  .number { color: #79c0ff; }
-  .cls { color: #ffa657; }
-  .builtin { color: #79c0ff; }
-  .decorator { color: #d2a8ff; }
-  .op { color: #ff7b72; }
-  .param { color: #ffa657; }
-  .self { color: #ff7b72; }
-  .opt-tag {
-    display: inline-block;
-    background: #1f6feb33;
-    color: #58a6ff;
-    font-size: 9px;
-    padding: 0 4px;
-    border-radius: 3px;
-    margin-left: 6px;
-    vertical-align: middle;
-    font-weight: 600;
-    letter-spacing: 0.5px;
+  .view-python .panel-cuda { display: none; }
+  .view-cuda .panel-python { display: none; }
+  .view-python .grid,
+  .view-cuda .grid { grid-template-columns: 1fr; }
+  @media (max-width: 1100px) {
+    .grid { grid-template-columns: 1fr; }
   }
-  .opt-new {
-    background: #23863633;
-    color: #3fb950;
-  }
-  .opt-changed {
-    background: #9e6a0333;
-    color: #d29922;
-  }
-  .line-new {
-    background: #12261e;
-  }
-  .line-changed {
-    background: #272115;
-  }
-  footer {
-    text-align: center;
-    color: #484f58;
-    padding: 16px;
-    font-size: 11px;
-  }
-  footer a { color: #58a6ff; text-decoration: none; }
-  footer a:hover { text-decoration: underline; }
-  .legend {
-    display: flex;
-    justify-content: center;
-    gap: 18px;
-    padding: 8px 0 12px 0;
-    font-size: 11px;
-  }
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-  .legend-dot {
-    width: 10px; height: 10px; border-radius: 2px;
-  }
-  .legend-dot.new { background: #12261e; border: 1px solid #3fb950; }
-  .legend-dot.changed { background: #272115; border: 1px solid #d29922; }
-  .legend-dot.original { background: #0d1117; border: 1px solid #484f58; }
 </style>
 </head>
-<body>
+<body class="view-bilingual">
+<div class="wrap">
+  <h1>microgpt Code Converter</h1>
+  <div class="subtitle">Python and CUDA versions as bilingual documents: switch or compare side by side.</div>
 
-<h1>microgpt <span style="color:#8b949e;font-size:14px;font-weight:400;">(optimized)</span></h1>
-<div class="subtitle">Original by @karpathy &mdash; Optimizations: weight tying, AdamW, cosine LR, grad clip, top-k sampling, train/val split</div>
-<div class="legend">
-  <div class="legend-item"><div class="legend-dot new"></div> <span style="color:#3fb950;">New code</span></div>
-  <div class="legend-item"><div class="legend-dot changed"></div> <span style="color:#d29922;">Changed code</span></div>
-  <div class="legend-item"><div class="legend-dot original"></div> <span style="color:#8b949e;">Original</span></div>
+  <div class="toolbar">
+    <button class="btn" data-view="python">Python View</button>
+    <button class="btn" data-view="cuda">CUDA View</button>
+    <button class="btn active" data-view="bilingual">Bilingual View</button>
+  </div>
+  <div class="hint">This page behaves like a language-version converter: same project, two implementation languages.</div>
+
+  <div class="grid">
+    <section class="panel panel-python" id="panel-python">
+      <div class="panel-header">
+        <div class="panel-title">Python (microgpt.py)</div>
+        <div class="panel-meta" id="meta-python"></div>
+      </div>
+      <div class="code-scroll" id="scroll-python"></div>
+    </section>
+
+    <section class="panel panel-cuda" id="panel-cuda">
+      <div class="panel-header">
+        <div class="panel-title">CUDA/C++ (microgpt_cuda.cu)</div>
+        <div class="panel-meta" id="meta-cuda"></div>
+      </div>
+      <div class="code-scroll" id="scroll-cuda"></div>
+    </section>
+  </div>
 </div>
 
-<div class="columns">
-<!-- ============ COLUMN 1: Lines 1-98 ============ -->
-<div class="column"><pre>
-<div class="line"><span class="ln">1</span><span class="code"><span class="string">"""</span></span></div>
-<div class="line"><span class="ln">2</span><span class="code"><span class="string">The most atomic way to train and inference a GPT in pure, dependency-free Python.</span></span></div>
-<div class="line"><span class="ln">3</span><span class="code"><span class="string">This file is the complete algorithm.</span></span></div>
-<div class="line"><span class="ln">4</span><span class="code"><span class="string">Everything else is just efficiency.</span></span></div>
-<div class="line"><span class="ln">5</span><span class="code"><span class="string"></span></span></div>
-<div class="line"><span class="ln">6</span><span class="code"><span class="string">@karpathy (optimized)</span></span></div>
-<div class="line"><span class="ln">7</span><span class="code"><span class="string">"""</span></span></div>
-<div class="line"><span class="ln">8</span><span class="code"></span></div>
-<div class="line"><span class="ln">9</span><span class="code"><span class="keyword">import</span> os       <span class="comment"># os.path.exists</span></span></div>
-<div class="line"><span class="ln">10</span><span class="code"><span class="keyword">import</span> math     <span class="comment"># math.log, math.exp</span></span></div>
-<div class="line"><span class="ln">11</span><span class="code"><span class="keyword">import</span> random   <span class="comment"># random.seed, random.choices, random.gauss, random.shuffle</span></span></div>
-<div class="line line-new"><span class="ln">12</span><span class="code"><span class="keyword">import</span> time     <span class="comment"># time.time</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line"><span class="ln">13</span><span class="code"></span></div>
-<div class="line"><span class="ln">14</span><span class="code"><span class="comment"># Let there be order among chaos</span></span></div>
-<div class="line"><span class="ln">15</span><span class="code">random.seed(<span class="number">42</span>)</span></div>
-<div class="line"><span class="ln">16</span><span class="code"></span></div>
-<div class="line"><span class="ln">17</span><span class="code"><span class="comment"># Let there be an input dataset `docs`: list[str] of documents (e.g. a dataset of names)</span></span></div>
-<div class="line"><span class="ln">18</span><span class="code"><span class="keyword">if not</span> os.path.exists(<span class="string">'input.txt'</span>):</span></div>
-<div class="line"><span class="ln">19</span><span class="code">    <span class="keyword">import</span> urllib.request</span></div>
-<div class="line"><span class="ln">20</span><span class="code">    names_url = <span class="string">'https://raw.githubusercontent.com/karpathy/makemore/refs/heads/master/names.txt'</span></span></div>
-<div class="line"><span class="ln">21</span><span class="code">    urllib.request.urlretrieve(names_url, <span class="string">'input.txt'</span>)</span></div>
-<div class="line line-changed"><span class="ln">22</span><span class="code"><span class="keyword">with</span> <span class="builtin">open</span>(<span class="string">'input.txt'</span>) <span class="keyword">as</span> f: <span class="comment"># proper file handle closing</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line line-changed"><span class="ln">23</span><span class="code">    docs = [l.strip() <span class="keyword">for</span> l <span class="keyword">in</span> f.read().strip().split(<span class="string">'\n'</span>) <span class="keyword">if</span> l.strip()]</span></div>
-<div class="line"><span class="ln">24</span><span class="code">random.shuffle(docs)</span></div>
-<div class="line line-new"><span class="ln">25</span><span class="code">split = <span class="builtin">int</span>(<span class="number">0.9</span> * <span class="builtin">len</span>(docs))<span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line line-new"><span class="ln">26</span><span class="code">train_docs, val_docs = docs[:split], docs[split:]</span></div>
-<div class="line line-changed"><span class="ln">27</span><span class="code"><span class="builtin">print</span>(<span class="string">f"num docs: {<span class="builtin">len</span>(docs)} (train: {<span class="builtin">len</span>(train_docs)}, val: {<span class="builtin">len</span>(val_docs)})"</span>)<span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">28</span><span class="code"></span></div>
-<div class="line"><span class="ln">29</span><span class="code"><span class="comment"># Let there be a Tokenizer to translate strings to discrete symbols and back</span></span></div>
-<div class="line"><span class="ln">30</span><span class="code">chars = [<span class="string">'&lt;BOS&gt;'</span>] + <span class="builtin">sorted</span>(<span class="builtin">set</span>(<span class="string">''</span>.join(docs))) <span class="comment"># character-level tokenizer with a BOS delimiter</span></span></div>
-<div class="line"><span class="ln">31</span><span class="code">vocab_size = <span class="builtin">len</span>(chars)</span></div>
-<div class="line"><span class="ln">32</span><span class="code">stoi = { ch:i <span class="keyword">for</span> i, ch <span class="keyword">in</span> <span class="builtin">enumerate</span>(chars) } <span class="comment"># encoding: map string to integer</span></span></div>
-<div class="line"><span class="ln">33</span><span class="code">itos = { i:ch <span class="keyword">for</span> i, ch <span class="keyword">in</span> <span class="builtin">enumerate</span>(chars) } <span class="comment"># decoding: map integer to string</span></span></div>
-<div class="line"><span class="ln">34</span><span class="code">BOS = stoi[<span class="string">'&lt;BOS&gt;'</span>]</span></div>
-<div class="line"><span class="ln">35</span><span class="code"><span class="builtin">print</span>(<span class="string">f"vocab size: {vocab_size}"</span>)</span></div>
-<div class="line"><span class="ln">36</span><span class="code"></span></div>
-<div class="line"><span class="ln">37</span><span class="code"><span class="comment"># Let there be an Autograd to apply the chain rule recursively across a computation graph and so</span></span></div>
-<div class="line"><span class="ln">38</span><span class="code"><span class="comment"># calculate the gradients of the loss with respect to model parameters.</span></span></div>
-<div class="line"><span class="ln">39</span><span class="code"><span class="keyword">class</span> <span class="cls">Value</span>:</span></div>
-<div class="line"><span class="ln">40</span><span class="code">    <span class="string">"""Stores a single scalar value and its gradient."""</span></span></div>
-<div class="line"><span class="ln">41</span><span class="code"></span></div>
-<div class="line"><span class="ln">42</span><span class="code">    <span class="keyword">def</span> <span class="func">__init__</span>(<span class="self">self</span>, data, _children=(), _op=<span class="string">''</span>):</span></div>
-<div class="line"><span class="ln">43</span><span class="code">        <span class="self">self</span>.data = data</span></div>
-<div class="line"><span class="ln">44</span><span class="code">        <span class="self">self</span>.grad = <span class="number">0</span></span></div>
-<div class="line"><span class="ln">45</span><span class="code">        <span class="self">self</span>._backward = <span class="keyword">lambda</span>: <span class="keyword">None</span></span></div>
-<div class="line"><span class="ln">46</span><span class="code">        <span class="self">self</span>._prev = <span class="builtin">set</span>(_children)</span></div>
-<div class="line"><span class="ln">47</span><span class="code">        <span class="self">self</span>._op = _op <span class="comment"># the op that produced this node, for graphviz / debugging / etc</span></span></div>
-<div class="line"><span class="ln">48</span><span class="code"></span></div>
-<div class="line"><span class="ln">49</span><span class="code">    <span class="keyword">def</span> <span class="func">__add__</span>(<span class="self">self</span>, other):</span></div>
-<div class="line"><span class="ln">50</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
-<div class="line"><span class="ln">51</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data + other.data, (<span class="self">self</span>, other), <span class="string">'+'</span>)</span></div>
-<div class="line"><span class="ln">52</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">53</span><span class="code">            <span class="self">self</span>.grad += out.grad</span></div>
-<div class="line"><span class="ln">54</span><span class="code">            other.grad += out.grad</span></div>
-<div class="line"><span class="ln">55</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">56</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">57</span><span class="code"></span></div>
-<div class="line"><span class="ln">58</span><span class="code">    <span class="keyword">def</span> <span class="func">__mul__</span>(<span class="self">self</span>, other):</span></div>
-<div class="line"><span class="ln">59</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
-<div class="line"><span class="ln">60</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data * other.data, (<span class="self">self</span>, other), <span class="string">'*'</span>)</span></div>
-<div class="line"><span class="ln">61</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">62</span><span class="code">            <span class="self">self</span>.grad += other.data * out.grad</span></div>
-<div class="line"><span class="ln">63</span><span class="code">            other.grad += <span class="self">self</span>.data * out.grad</span></div>
-<div class="line"><span class="ln">64</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">65</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">66</span><span class="code"></span></div>
-<div class="line"><span class="ln">67</span><span class="code">    <span class="keyword">def</span> <span class="func">__pow__</span>(<span class="self">self</span>, other):</span></div>
-<div class="line"><span class="ln">68</span><span class="code">        <span class="keyword">assert</span> <span class="builtin">isinstance</span>(other, (<span class="builtin">int</span>, <span class="builtin">float</span>)), <span class="string">"only supporting int/float powers for now"</span></span></div>
-<div class="line"><span class="ln">69</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data**other, (<span class="self">self</span>,), <span class="string">f'**{other}'</span>)</span></div>
-<div class="line"><span class="ln">70</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">71</span><span class="code">            <span class="self">self</span>.grad += (other * <span class="self">self</span>.data**(other-<span class="number">1</span>)) * out.grad</span></div>
-<div class="line"><span class="ln">72</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">73</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">74</span><span class="code"></span></div>
-<div class="line line-new"><span class="ln">75</span><span class="code">    <span class="keyword">def</span> <span class="func">__truediv__</span>(<span class="self">self</span>, other): <span class="comment"># direct div: fewer graph nodes than self * other**-1</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line line-new"><span class="ln">76</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
-<div class="line line-new"><span class="ln">77</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data / other.data, (<span class="self">self</span>, other), <span class="string">'/'</span>)</span></div>
-<div class="line line-new"><span class="ln">78</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line line-new"><span class="ln">79</span><span class="code">            <span class="self">self</span>.grad += (<span class="number">1.0</span> / other.data) * out.grad</span></div>
-<div class="line line-new"><span class="ln">80</span><span class="code">            other.grad += (-<span class="self">self</span>.data / (other.data ** <span class="number">2</span>)) * out.grad</span></div>
-<div class="line line-new"><span class="ln">81</span><span class="code">        out._backward = _backward</span></div>
-<div class="line line-new"><span class="ln">82</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">83</span><span class="code"></span></div>
-<div class="line"><span class="ln">84</span><span class="code">    <span class="keyword">def</span> <span class="func">log</span>(<span class="self">self</span>):</span></div>
-<div class="line"><span class="ln">85</span><span class="code">        out = <span class="cls">Value</span>(math.log(<span class="self">self</span>.data), (<span class="self">self</span>,), <span class="string">'log'</span>)</span></div>
-<div class="line"><span class="ln">86</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">87</span><span class="code">            <span class="self">self</span>.grad += (<span class="number">1</span> / <span class="self">self</span>.data) * out.grad</span></div>
-<div class="line"><span class="ln">88</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">89</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">90</span><span class="code"></span></div>
-<div class="line"><span class="ln">91</span><span class="code">    <span class="keyword">def</span> <span class="func">exp</span>(<span class="self">self</span>):</span></div>
-<div class="line"><span class="ln">92</span><span class="code">        out = <span class="cls">Value</span>(math.exp(<span class="self">self</span>.data), (<span class="self">self</span>,), <span class="string">'exp'</span>)</span></div>
-<div class="line"><span class="ln">93</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">94</span><span class="code">            <span class="self">self</span>.grad += out.data * out.grad</span></div>
-<div class="line"><span class="ln">95</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">96</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">97</span><span class="code"></span></div>
-<div class="line"><span class="ln">98</span><span class="code">    <span class="keyword">def</span> <span class="func">relu</span>(<span class="self">self</span>):</span></div>
-</pre></div>
-<!-- ============ COLUMN 2: Lines 99-196 ============ -->
-<div class="column"><pre>
-<div class="line"><span class="ln">99</span><span class="code">        out = <span class="cls">Value</span>(<span class="number">0</span> <span class="keyword">if</span> <span class="self">self</span>.data &lt; <span class="number">0</span> <span class="keyword">else</span> <span class="self">self</span>.data, (<span class="self">self</span>,), <span class="string">'ReLU'</span>)</span></div>
-<div class="line"><span class="ln">100</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">101</span><span class="code">            <span class="self">self</span>.grad += (out.data &gt; <span class="number">0</span>) * out.grad</span></div>
-<div class="line"><span class="ln">102</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">103</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">104</span><span class="code"></span></div>
-<div class="line line-changed"><span class="ln">105</span><span class="code">    <span class="keyword">def</span> <span class="func">backward</span>(<span class="self">self</span>): <span class="comment"># iterative topological sort (no recursion limit)</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">106</span><span class="code">        topo = []</span></div>
-<div class="line"><span class="ln">107</span><span class="code">        visited = <span class="builtin">set</span>()</span></div>
-<div class="line line-new"><span class="ln">108</span><span class="code">        stack = [(<span class="self">self</span>, <span class="keyword">False</span>)]</span></div>
-<div class="line line-new"><span class="ln">109</span><span class="code">        <span class="keyword">while</span> stack:</span></div>
-<div class="line line-new"><span class="ln">110</span><span class="code">            node, processed = stack.pop()</span></div>
-<div class="line line-new"><span class="ln">111</span><span class="code">            <span class="keyword">if</span> processed:</span></div>
-<div class="line line-new"><span class="ln">112</span><span class="code">                topo.append(node)</span></div>
-<div class="line line-new"><span class="ln">113</span><span class="code">                <span class="keyword">continue</span></span></div>
-<div class="line line-new"><span class="ln">114</span><span class="code">            <span class="keyword">if</span> node <span class="keyword">in</span> visited:</span></div>
-<div class="line line-new"><span class="ln">115</span><span class="code">                <span class="keyword">continue</span></span></div>
-<div class="line line-new"><span class="ln">116</span><span class="code">            visited.add(node)</span></div>
-<div class="line line-new"><span class="ln">117</span><span class="code">            stack.append((node, <span class="keyword">True</span>))</span></div>
-<div class="line line-new"><span class="ln">118</span><span class="code">            <span class="keyword">for</span> child <span class="keyword">in</span> node._prev:</span></div>
-<div class="line line-new"><span class="ln">119</span><span class="code">                <span class="keyword">if</span> child <span class="keyword">not in</span> visited:</span></div>
-<div class="line line-new"><span class="ln">120</span><span class="code">                    stack.append((child, <span class="keyword">False</span>))</span></div>
-<div class="line"><span class="ln">121</span><span class="code">        <span class="self">self</span>.grad = <span class="number">1</span></span></div>
-<div class="line"><span class="ln">122</span><span class="code">        <span class="keyword">for</span> v <span class="keyword">in</span> <span class="builtin">reversed</span>(topo):</span></div>
-<div class="line"><span class="ln">123</span><span class="code">            v._backward()</span></div>
-<div class="line"><span class="ln">124</span><span class="code"></span></div>
-<div class="line"><span class="ln">125</span><span class="code">    <span class="keyword">def</span> <span class="func">__neg__</span>(<span class="self">self</span>): <span class="keyword">return</span> <span class="self">self</span> * -<span class="number">1</span></span></div>
-<div class="line"><span class="ln">126</span><span class="code">    <span class="keyword">def</span> <span class="func">__radd__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> <span class="self">self</span> + other</span></div>
-<div class="line"><span class="ln">127</span><span class="code">    <span class="keyword">def</span> <span class="func">__sub__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> <span class="self">self</span> + (-other)</span></div>
-<div class="line"><span class="ln">128</span><span class="code">    <span class="keyword">def</span> <span class="func">__rsub__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> other + (-<span class="self">self</span>)</span></div>
-<div class="line"><span class="ln">129</span><span class="code">    <span class="keyword">def</span> <span class="func">__rmul__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> <span class="self">self</span> * other</span></div>
-<div class="line line-new"><span class="ln">130</span><span class="code">    <span class="keyword">def</span> <span class="func">__rtruediv__</span>(<span class="self">self</span>, other): <span class="comment"># uses direct __truediv__ now</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line line-new"><span class="ln">131</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
-<div class="line line-new"><span class="ln">132</span><span class="code">        <span class="keyword">return</span> other / <span class="self">self</span></span></div>
-<div class="line"><span class="ln">133</span><span class="code">    <span class="keyword">def</span> <span class="func">__repr__</span>(<span class="self">self</span>): <span class="keyword">return</span> <span class="string">f"Value(data={<span class="self">self</span>.data}, grad={<span class="self">self</span>.grad})"</span></span></div>
-<div class="line"><span class="ln">134</span><span class="code"></span></div>
-<div class="line"><span class="ln">135</span><span class="code"><span class="comment"># Initialize the parameters, to store the knowledge of the model.</span></span></div>
-<div class="line"><span class="ln">136</span><span class="code">n_embd = <span class="number">16</span>     <span class="comment"># embedding dimension</span></span></div>
-<div class="line"><span class="ln">137</span><span class="code">n_head = <span class="number">4</span>      <span class="comment"># number of attention heads</span></span></div>
-<div class="line"><span class="ln">138</span><span class="code">n_layer = <span class="number">1</span>     <span class="comment"># number of layers</span></span></div>
-<div class="line"><span class="ln">139</span><span class="code">block_size = <span class="number">8</span>  <span class="comment"># maximum sequence length</span></span></div>
-<div class="line"><span class="ln">140</span><span class="code">head_dim = n_embd // n_head <span class="comment"># dimension of each head</span></span></div>
-<div class="line"><span class="ln">141</span><span class="code">matrix = <span class="keyword">lambda</span> nout, nin, std=<span class="number">0.02</span>: [[<span class="cls">Value</span>(random.gauss(<span class="number">0</span>, std)) <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(nin)] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(nout)]</span></div>
-<div class="line line-changed"><span class="ln">142</span><span class="code">state_dict = {<span class="string">'wte'</span>: matrix(vocab_size, n_embd), <span class="string">'wpe'</span>: matrix(block_size, n_embd)} <span class="comment"># weight tying: wte doubles as lm_head</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">143</span><span class="code"><span class="keyword">for</span> i <span class="keyword">in</span> <span class="builtin">range</span>(n_layer):</span></div>
-<div class="line"><span class="ln">144</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wq'</span>] = matrix(n_embd, n_embd)</span></div>
-<div class="line"><span class="ln">145</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wk'</span>] = matrix(n_embd, n_embd)</span></div>
-<div class="line"><span class="ln">146</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wv'</span>] = matrix(n_embd, n_embd)</span></div>
-<div class="line"><span class="ln">147</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wo'</span>] = matrix(n_embd, n_embd, std=<span class="number">0</span>)</span></div>
-<div class="line"><span class="ln">148</span><span class="code">    state_dict[<span class="string">f'layer{i}.mlp_fc1'</span>] = matrix(<span class="number">4</span> * n_embd, n_embd)</span></div>
-<div class="line"><span class="ln">149</span><span class="code">    state_dict[<span class="string">f'layer{i}.mlp_fc2'</span>] = matrix(n_embd, <span class="number">4</span> * n_embd, std=<span class="number">0</span>)</span></div>
-<div class="line"><span class="ln">150</span><span class="code">params = [p <span class="keyword">for</span> mat <span class="keyword">in</span> state_dict.values() <span class="keyword">for</span> row <span class="keyword">in</span> mat <span class="keyword">for</span> p <span class="keyword">in</span> row] <span class="comment"># flatten params into a single list[Value]</span></span></div>
-<div class="line"><span class="ln">151</span><span class="code"><span class="builtin">print</span>(<span class="string">f"num params: {<span class="builtin">len</span>(params)}"</span>)</span></div>
-<div class="line"><span class="ln">152</span><span class="code"></span></div>
-<div class="line"><span class="ln">153</span><span class="code"><span class="comment"># Define the model architecture: a stateless function mapping token sequence and parameters to logits over what comes next.</span></span></div>
-<div class="line"><span class="ln">154</span><span class="code"><span class="comment"># Follow GPT-2, blessed among the GPTs, with minor differences: layernorm -&gt; rmsnorm, no biases, GeLU -&gt; ReLU^2</span></span></div>
-<div class="line"><span class="ln">155</span><span class="code"><span class="keyword">def</span> <span class="func">linear</span>(x, w):</span></div>
-<div class="line"><span class="ln">156</span><span class="code">    <span class="keyword">return</span> [<span class="builtin">sum</span>(wi * xi <span class="keyword">for</span> wi, xi <span class="keyword">in</span> <span class="builtin">zip</span>(wo, x)) <span class="keyword">for</span> wo <span class="keyword">in</span> w]</span></div>
-<div class="line"><span class="ln">157</span><span class="code"></span></div>
-<div class="line"><span class="ln">158</span><span class="code"><span class="keyword">def</span> <span class="func">softmax</span>(logits):</span></div>
-<div class="line"><span class="ln">159</span><span class="code">    max_val = <span class="builtin">max</span>(val.data <span class="keyword">for</span> val <span class="keyword">in</span> logits)</span></div>
-<div class="line"><span class="ln">160</span><span class="code">    exps = [(val - max_val).exp() <span class="keyword">for</span> val <span class="keyword">in</span> logits]</span></div>
-<div class="line"><span class="ln">161</span><span class="code">    total = <span class="builtin">sum</span>(exps)</span></div>
-<div class="line"><span class="ln">162</span><span class="code">    <span class="keyword">return</span> [e / total <span class="keyword">for</span> e <span class="keyword">in</span> exps]</span></div>
-<div class="line"><span class="ln">163</span><span class="code"></span></div>
-<div class="line"><span class="ln">164</span><span class="code"><span class="keyword">def</span> <span class="func">rmsnorm</span>(x):</span></div>
-<div class="line"><span class="ln">165</span><span class="code">    ms = <span class="builtin">sum</span>(xi * xi <span class="keyword">for</span> xi <span class="keyword">in</span> x) / <span class="builtin">len</span>(x)</span></div>
-<div class="line"><span class="ln">166</span><span class="code">    scale = (ms + <span class="number">1e-5</span>) ** -<span class="number">0.5</span></span></div>
-<div class="line"><span class="ln">167</span><span class="code">    <span class="keyword">return</span> [xi * scale <span class="keyword">for</span> xi <span class="keyword">in</span> x]</span></div>
-<div class="line"><span class="ln">168</span><span class="code"></span></div>
-<div class="line line-new"><span class="ln">169</span><span class="code"><span class="keyword">def</span> <span class="func">cross_entropy</span>(logits, target_id): <span class="comment"># fused log-softmax + nll: fewer nodes, numerically stable</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line line-new"><span class="ln">170</span><span class="code">    max_val = <span class="builtin">max</span>(val.data <span class="keyword">for</span> val <span class="keyword">in</span> logits)</span></div>
-<div class="line line-new"><span class="ln">171</span><span class="code">    shifted = [val - max_val <span class="keyword">for</span> val <span class="keyword">in</span> logits]</span></div>
-<div class="line line-new"><span class="ln">172</span><span class="code">    log_sum_exp = <span class="builtin">sum</span>(s.exp() <span class="keyword">for</span> s <span class="keyword">in</span> shifted).log()</span></div>
-<div class="line line-new"><span class="ln">173</span><span class="code">    <span class="keyword">return</span> -(shifted[target_id] - log_sum_exp)</span></div>
-<div class="line"><span class="ln">174</span><span class="code"></span></div>
-<div class="line"><span class="ln">175</span><span class="code"><span class="keyword">def</span> <span class="func">gpt</span>(token_id, pos_id, keys, values):</span></div>
-<div class="line"><span class="ln">176</span><span class="code">    tok_emb = state_dict[<span class="string">'wte'</span>][token_id] <span class="comment"># token embedding</span></span></div>
-<div class="line"><span class="ln">177</span><span class="code">    pos_emb = state_dict[<span class="string">'wpe'</span>][pos_id] <span class="comment"># position embedding</span></span></div>
-<div class="line"><span class="ln">178</span><span class="code">    x = [t + p <span class="keyword">for</span> t, p <span class="keyword">in</span> <span class="builtin">zip</span>(tok_emb, pos_emb)] <span class="comment"># joint token and position embedding</span></span></div>
-<div class="line"><span class="ln">179</span><span class="code">    x = rmsnorm(x)</span></div>
-<div class="line"><span class="ln">180</span><span class="code"></span></div>
-<div class="line"><span class="ln">181</span><span class="code">    <span class="keyword">for</span> li <span class="keyword">in</span> <span class="builtin">range</span>(n_layer):</span></div>
-<div class="line"><span class="ln">182</span><span class="code">        <span class="comment"># 1) Multi-head attention block</span></span></div>
-<div class="line"><span class="ln">183</span><span class="code">        x_residual = x</span></div>
-<div class="line"><span class="ln">184</span><span class="code">        x = rmsnorm(x)</span></div>
-<div class="line"><span class="ln">185</span><span class="code">        q = linear(x, state_dict[<span class="string">f'layer{li}.attn_wq'</span>])</span></div>
-<div class="line"><span class="ln">186</span><span class="code">        k = linear(x, state_dict[<span class="string">f'layer{li}.attn_wk'</span>])</span></div>
-<div class="line"><span class="ln">187</span><span class="code">        v = linear(x, state_dict[<span class="string">f'layer{li}.attn_wv'</span>])</span></div>
-<div class="line"><span class="ln">188</span><span class="code">        keys[li].append(k)</span></div>
-<div class="line"><span class="ln">189</span><span class="code">        values[li].append(v)</span></div>
-<div class="line"><span class="ln">190</span><span class="code">        x_attn = []</span></div>
-<div class="line"><span class="ln">191</span><span class="code">        <span class="keyword">for</span> h <span class="keyword">in</span> <span class="builtin">range</span>(n_head):</span></div>
-<div class="line"><span class="ln">192</span><span class="code">            hs = h * head_dim</span></div>
-<div class="line"><span class="ln">193</span><span class="code">            q_h = q[hs:hs+head_dim]</span></div>
-<div class="line"><span class="ln">194</span><span class="code">            k_h = [ki[hs:hs+head_dim] <span class="keyword">for</span> ki <span class="keyword">in</span> keys[li]]</span></div>
-<div class="line"><span class="ln">195</span><span class="code">            v_h = [vi[hs:hs+head_dim] <span class="keyword">for</span> vi <span class="keyword">in</span> values[li]]</span></div>
-<div class="line"><span class="ln">196</span><span class="code">            attn_logits = [<span class="builtin">sum</span>(q_h[j] * k_h[t][j] <span class="keyword">for</span> j <span class="keyword">in</span> <span class="builtin">range</span>(head_dim)) / head_dim**<span class="number">0.5</span> <span class="keyword">for</span> t <span class="keyword">in</span> <span class="builtin">range</span>(<span class="builtin">len</span>(k_h))]</span></div>
-</pre></div>
-<!-- ============ COLUMN 3: Lines 197-293 ============ -->
-<div class="column"><pre>
-<div class="line"><span class="ln">197</span><span class="code">            attn_weights = softmax(attn_logits)</span></div>
-<div class="line"><span class="ln">198</span><span class="code">            head_out = [<span class="builtin">sum</span>(attn_weights[t] * v_h[t][j] <span class="keyword">for</span> t <span class="keyword">in</span> <span class="builtin">range</span>(<span class="builtin">len</span>(v_h))) <span class="keyword">for</span> j <span class="keyword">in</span> <span class="builtin">range</span>(head_dim)]</span></div>
-<div class="line"><span class="ln">199</span><span class="code">            x_attn.extend(head_out)</span></div>
-<div class="line"><span class="ln">200</span><span class="code">        x = linear(x_attn, state_dict[<span class="string">f'layer{li}.attn_wo'</span>])</span></div>
-<div class="line"><span class="ln">201</span><span class="code">        x = [a + b <span class="keyword">for</span> a, b <span class="keyword">in</span> <span class="builtin">zip</span>(x, x_residual)]</span></div>
-<div class="line"><span class="ln">202</span><span class="code">        <span class="comment"># 2) MLP block</span></span></div>
-<div class="line"><span class="ln">203</span><span class="code">        x_residual = x</span></div>
-<div class="line"><span class="ln">204</span><span class="code">        x = rmsnorm(x)</span></div>
-<div class="line"><span class="ln">205</span><span class="code">        x = linear(x, state_dict[<span class="string">f'layer{li}.mlp_fc1'</span>])</span></div>
-<div class="line"><span class="ln">206</span><span class="code">        x = [xi.relu() ** <span class="number">2</span> <span class="keyword">for</span> xi <span class="keyword">in</span> x]</span></div>
-<div class="line"><span class="ln">207</span><span class="code">        x = linear(x, state_dict[<span class="string">f'layer{li}.mlp_fc2'</span>])</span></div>
-<div class="line"><span class="ln">208</span><span class="code">        x = [a + b <span class="keyword">for</span> a, b <span class="keyword">in</span> <span class="builtin">zip</span>(x, x_residual)]</span></div>
-<div class="line"><span class="ln">209</span><span class="code"></span></div>
-<div class="line line-changed"><span class="ln">210</span><span class="code">    logits = linear(x, state_dict[<span class="string">'wte'</span>]) <span class="comment"># weight tying: reuse token embeddings as output projection</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">211</span><span class="code">    <span class="keyword">return</span> logits</span></div>
-<div class="line"><span class="ln">212</span><span class="code"></span></div>
-<div class="line"><span class="ln">213</span><span class="code"><span class="comment"># Let there be Adam, the blessed optimizer and its buffers</span></span></div>
-<div class="line line-changed"><span class="ln">214</span><span class="code">learning_rate, beta1, beta2, eps_adam, weight_decay = <span class="number">1e-2</span>, <span class="number">0.9</span>, <span class="number">0.95</span>, <span class="number">1e-8</span>, <span class="number">1e-4</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">215</span><span class="code">m = [<span class="number">0.0</span>] * <span class="builtin">len</span>(params) <span class="comment"># first moment buffer</span></span></div>
-<div class="line"><span class="ln">216</span><span class="code">v = [<span class="number">0.0</span>] * <span class="builtin">len</span>(params) <span class="comment"># second moment buffer</span></span></div>
-<div class="line line-changed"><span class="ln">217</span><span class="code">b1_prod, b2_prod = <span class="number">1.0</span>, <span class="number">1.0</span> <span class="comment"># running product for bias correction</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line line-new"><span class="ln">218</span><span class="code">max_grad_norm = <span class="number">1.0</span> <span class="comment"># gradient clipping threshold</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line"><span class="ln">219</span><span class="code"></span></div>
-<div class="line"><span class="ln">220</span><span class="code"><span class="comment"># Repeat in sequence</span></span></div>
-<div class="line"><span class="ln">221</span><span class="code">num_steps = <span class="number">500</span> <span class="comment"># number of training steps</span></span></div>
-<div class="line"><span class="ln">222</span><span class="code"><span class="keyword">for</span> step <span class="keyword">in</span> <span class="builtin">range</span>(num_steps):</span></div>
-<div class="line line-new"><span class="ln">223</span><span class="code">    t0 = time.time()<span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line"><span class="ln">224</span><span class="code"></span></div>
-<div class="line"><span class="ln">225</span><span class="code">    <span class="comment"># Take single document, tokenize it, surround it with BOS special token on both sides</span></span></div>
-<div class="line line-changed"><span class="ln">226</span><span class="code">    doc = train_docs[step % <span class="builtin">len</span>(train_docs)]<span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">227</span><span class="code">    tokens = [BOS] + [stoi[ch] <span class="keyword">for</span> ch <span class="keyword">in</span> doc] + [BOS]</span></div>
-<div class="line"><span class="ln">228</span><span class="code">    n = <span class="builtin">min</span>(block_size, <span class="builtin">len</span>(tokens) - <span class="number">1</span>)</span></div>
-<div class="line"><span class="ln">229</span><span class="code"></span></div>
-<div class="line"><span class="ln">230</span><span class="code">    <span class="comment"># Forward the token sequence through the model, building up the computation graph all the way to the loss.</span></span></div>
-<div class="line"><span class="ln">231</span><span class="code">    keys, values = [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)], [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)]</span></div>
-<div class="line"><span class="ln">232</span><span class="code">    losses = []</span></div>
-<div class="line"><span class="ln">233</span><span class="code">    <span class="keyword">for</span> pos_id <span class="keyword">in</span> <span class="builtin">range</span>(n):</span></div>
-<div class="line"><span class="ln">234</span><span class="code">        token_id, target_id = tokens[pos_id], tokens[pos_id + <span class="number">1</span>]</span></div>
-<div class="line"><span class="ln">235</span><span class="code">        logits = gpt(token_id, pos_id, keys, values)</span></div>
-<div class="line line-changed"><span class="ln">236</span><span class="code">        loss_t = cross_entropy(logits, target_id) <span class="comment"># fused cross-entropy replaces softmax+log</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">237</span><span class="code">        losses.append(loss_t)</span></div>
-<div class="line line-changed"><span class="ln">238</span><span class="code">    loss = (<span class="number">1</span> / n) * <span class="builtin">sum</span>(losses[<span class="number">1</span>:], losses[<span class="number">0</span>]) <span class="comment"># avoid phantom Value(0) node</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">239</span><span class="code"></span></div>
-<div class="line"><span class="ln">240</span><span class="code">    <span class="comment"># Backward the loss, calculating the gradients with respect to all model parameters.</span></span></div>
-<div class="line"><span class="ln">241</span><span class="code">    loss.backward()</span></div>
-<div class="line"><span class="ln">242</span><span class="code"></span></div>
-<div class="line line-new"><span class="ln">243</span><span class="code">    <span class="comment"># Gradient clipping by global norm</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line line-new"><span class="ln">244</span><span class="code">    grad_norm = <span class="builtin">sum</span>(p.grad ** <span class="number">2</span> <span class="keyword">for</span> p <span class="keyword">in</span> params) ** <span class="number">0.5</span></span></div>
-<div class="line line-new"><span class="ln">245</span><span class="code">    <span class="keyword">if</span> grad_norm &gt; max_grad_norm:</span></div>
-<div class="line line-new"><span class="ln">246</span><span class="code">        <span class="keyword">for</span> p <span class="keyword">in</span> params: p.grad *= max_grad_norm / grad_norm</span></div>
-<div class="line"><span class="ln">247</span><span class="code"></span></div>
-<div class="line line-changed"><span class="ln">248</span><span class="code">    <span class="comment"># AdamW optimizer update with cosine learning rate schedule</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line line-changed"><span class="ln">249</span><span class="code">    lr_t = learning_rate * <span class="number">0.5</span> * (<span class="number">1</span> + math.cos(math.pi * step / num_steps))</span></div>
-<div class="line line-changed"><span class="ln">250</span><span class="code">    b1_prod *= beta1; b2_prod *= beta2 <span class="comment"># running products instead of beta**step</span></span></div>
-<div class="line"><span class="ln">251</span><span class="code">    <span class="keyword">for</span> i, p <span class="keyword">in</span> <span class="builtin">enumerate</span>(params):</span></div>
-<div class="line"><span class="ln">252</span><span class="code">        m[i] = beta1 * m[i] + (<span class="number">1</span> - beta1) * p.grad</span></div>
-<div class="line"><span class="ln">253</span><span class="code">        v[i] = beta2 * v[i] + (<span class="number">1</span> - beta2) * p.grad ** <span class="number">2</span></span></div>
-<div class="line line-changed"><span class="ln">254</span><span class="code">        m_hat = m[i] / (<span class="number">1</span> - b1_prod) <span class="comment"># stable bias correction</span></span></div>
-<div class="line line-changed"><span class="ln">255</span><span class="code">        v_hat = v[i] / (<span class="number">1</span> - b2_prod)</span></div>
-<div class="line line-changed"><span class="ln">256</span><span class="code">        p.data -= lr_t * (m_hat / (v_hat ** <span class="number">0.5</span> + eps_adam) + weight_decay * p.data)<span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">257</span><span class="code">        p.grad = <span class="number">0</span></span></div>
-<div class="line"><span class="ln">258</span><span class="code"></span></div>
-<div class="line line-changed"><span class="ln">259</span><span class="code">    <span class="builtin">print</span>(<span class="string">f"step {step+1:4d}/{num_steps:4d} | loss {loss.data:.4f} | {(time.time()-t0)*1000:.0f}ms"</span>)<span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">260</span><span class="code"></span></div>
-<div class="line line-new"><span class="ln">261</span><span class="code">    <span class="comment"># Periodic validation on held-out documents</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line line-new"><span class="ln">262</span><span class="code">    <span class="keyword">if</span> (step + <span class="number">1</span>) % <span class="number">100</span> == <span class="number">0</span>:</span></div>
-<div class="line line-new"><span class="ln">263</span><span class="code">        val_loss, val_n = <span class="number">0.0</span>, <span class="number">0</span></span></div>
-<div class="line line-new"><span class="ln">264</span><span class="code">        <span class="keyword">for</span> vdoc <span class="keyword">in</span> val_docs[:<span class="number">20</span>]:</span></div>
-<div class="line line-new"><span class="ln">265</span><span class="code">            vt = [BOS] + [stoi[ch] <span class="keyword">for</span> ch <span class="keyword">in</span> vdoc] + [BOS]</span></div>
-<div class="line line-new"><span class="ln">266</span><span class="code">            vn = <span class="builtin">min</span>(block_size, <span class="builtin">len</span>(vt) - <span class="number">1</span>)</span></div>
-<div class="line line-new"><span class="ln">267</span><span class="code">            vkeys, vvals = [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)], [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)]</span></div>
-<div class="line line-new"><span class="ln">268</span><span class="code">            <span class="keyword">for</span> vp <span class="keyword">in</span> <span class="builtin">range</span>(vn):</span></div>
-<div class="line line-new"><span class="ln">269</span><span class="code">                vlogits = gpt(vt[vp], vp, vkeys, vvals)</span></div>
-<div class="line line-new"><span class="ln">270</span><span class="code">                mx = <span class="builtin">max</span>(l.data <span class="keyword">for</span> l <span class="keyword">in</span> vlogits) <span class="comment"># pure-float NLL, no autograd overhead</span></span></div>
-<div class="line line-new"><span class="ln">271</span><span class="code">                val_loss -= vlogits[vt[vp+<span class="number">1</span>]].data - mx - math.log(<span class="builtin">sum</span>(math.exp(l.data - mx) <span class="keyword">for</span> l <span class="keyword">in</span> vlogits))</span></div>
-<div class="line line-new"><span class="ln">272</span><span class="code">                val_n += <span class="number">1</span></span></div>
-<div class="line line-new"><span class="ln">273</span><span class="code">        <span class="builtin">print</span>(<span class="string">f"  val loss: {val_loss / val_n:.4f}"</span>)</span></div>
-<div class="line"><span class="ln">274</span><span class="code"></span></div>
-<div class="line line-changed"><span class="ln">275</span><span class="code"><span class="comment"># Inference: may the model babble back to us, with top-k sampling</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line line-changed"><span class="ln">276</span><span class="code">temperature, top_k = <span class="number">0.6</span>, <span class="number">5</span></span></div>
-<div class="line"><span class="ln">277</span><span class="code"><span class="builtin">print</span>(<span class="string">"\n--- inference ---"</span>)</span></div>
-<div class="line"><span class="ln">278</span><span class="code"><span class="keyword">for</span> sample_idx <span class="keyword">in</span> <span class="builtin">range</span>(<span class="number">20</span>):</span></div>
-<div class="line"><span class="ln">279</span><span class="code">    keys, values = [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)], [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)]</span></div>
-<div class="line"><span class="ln">280</span><span class="code">    token_id = BOS</span></div>
-<div class="line line-changed"><span class="ln">281</span><span class="code">    <span class="builtin">print</span>(<span class="string">f"sample {sample_idx+1:2d}: "</span>, end=<span class="string">""</span>)</span></div>
-<div class="line"><span class="ln">282</span><span class="code">    <span class="keyword">for</span> pos_id <span class="keyword">in</span> <span class="builtin">range</span>(block_size):</span></div>
-<div class="line"><span class="ln">283</span><span class="code">        logits = gpt(token_id, pos_id, keys, values)</span></div>
-<div class="line line-new"><span class="ln">284</span><span class="code">        top_ids = <span class="builtin">sorted</span>(<span class="builtin">range</span>(vocab_size), key=<span class="keyword">lambda</span> i: logits[i].data, reverse=<span class="keyword">True</span>)[:<span class="number">top_k</span>]<span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line line-new"><span class="ln">285</span><span class="code">        top_logits = [logits[i].data / temperature <span class="keyword">for</span> i <span class="keyword">in</span> top_ids]</span></div>
-<div class="line line-new"><span class="ln">286</span><span class="code">        max_tl = <span class="builtin">max</span>(top_logits)</span></div>
-<div class="line line-new"><span class="ln">287</span><span class="code">        top_probs = [math.exp(tl - max_tl) <span class="keyword">for</span> tl <span class="keyword">in</span> top_logits]</span></div>
-<div class="line line-new"><span class="ln">288</span><span class="code">        token_id = top_ids[random.choices(<span class="builtin">range</span>(top_k), weights=top_probs)[<span class="number">0</span>]]</span></div>
-<div class="line"><span class="ln">289</span><span class="code">        <span class="keyword">if</span> token_id == BOS:</span></div>
-<div class="line"><span class="ln">290</span><span class="code">            <span class="keyword">break</span></span></div>
-<div class="line"><span class="ln">291</span><span class="code">        <span class="builtin">print</span>(itos[token_id], end=<span class="string">""</span>)</span></div>
-<div class="line"><span class="ln">292</span><span class="code">    <span class="builtin">print</span>()</span></div>
-<div class="line"><span class="ln">293</span><span class="code"></span></div>
-</pre></div>
-</div>
+<script id="python-source" type="text/plain">
+"""
+The most atomic way to train and inference a GPT in pure, dependency-free Python.
+This file is the complete algorithm.
+Everything else is just efficiency.
 
-<footer>
-  293 lines &bull; 0 dependencies &bull; Original by <a href="https://github.com/karpathy">@karpathy</a> &mdash; <a href="https://karpathy.ai/microgpt.html">microgpt</a> | <a href="https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95">Gist</a>
-</footer>
+@karpathy (optimized)
+"""
 
+import os       # os.path.exists
+import math     # math.log, math.exp
+import random   # random.seed, random.choices, random.gauss, random.shuffle
+import time     # time.time
+
+# Let there be order among chaos
+random.seed(42)
+
+# Let there be an input dataset `docs`: list[str] of documents (e.g. a dataset of names)
+if not os.path.exists('input.txt'):
+    import urllib.request
+    names_url = 'https://raw.githubusercontent.com/karpathy/makemore/refs/heads/master/names.txt'
+    urllib.request.urlretrieve(names_url, 'input.txt')
+with open('input.txt') as f: # proper file handle closing
+    docs = [l.strip() for l in f.read().strip().split('\n') if l.strip()]
+random.shuffle(docs)
+split = int(0.9 * len(docs))
+train_docs, val_docs = docs[:split], docs[split:]
+print(f"num docs: {len(docs)} (train: {len(train_docs)}, val: {len(val_docs)})")
+
+# Let there be a Tokenizer to translate strings to discrete symbols and back
+chars = ['<BOS>'] + sorted(set(''.join(docs))) # character-level tokenizer with a BOS delimiter
+vocab_size = len(chars)
+stoi = { ch:i for i, ch in enumerate(chars) } # encoding: map string to integer
+itos = { i:ch for i, ch in enumerate(chars) } # decoding: map integer to string
+BOS = stoi['<BOS>']
+print(f"vocab size: {vocab_size}")
+
+# Let there be an Autograd to apply the chain rule recursively across a computation graph and so
+# calculate the gradients of the loss with respect to model parameters.
+class Value:
+    """Stores a single scalar value and its gradient."""
+
+    def __init__(self, data, _children=(), _op=''):
+        self.data = data
+        self.grad = 0
+        self._backward = lambda: None
+        self._prev = set(_children)
+        self._op = _op # the op that produced this node, for graphviz / debugging / etc
+
+    def __add__(self, other):
+        other = other if isinstance(other, Value) else Value(other)
+        out = Value(self.data + other.data, (self, other), '+')
+        def _backward():
+            self.grad += out.grad
+            other.grad += out.grad
+        out._backward = _backward
+        return out
+
+    def __mul__(self, other):
+        other = other if isinstance(other, Value) else Value(other)
+        out = Value(self.data * other.data, (self, other), '*')
+        def _backward():
+            self.grad += other.data * out.grad
+            other.grad += self.data * out.grad
+        out._backward = _backward
+        return out
+
+    def __pow__(self, other):
+        assert isinstance(other, (int, float)), "only supporting int/float powers for now"
+        out = Value(self.data**other, (self,), f'**{other}')
+        def _backward():
+            self.grad += (other * self.data**(other-1)) * out.grad
+        out._backward = _backward
+        return out
+
+    def __truediv__(self, other): # direct div: fewer graph nodes than self * other**-1
+        other = other if isinstance(other, Value) else Value(other)
+        out = Value(self.data / other.data, (self, other), '/')
+        def _backward():
+            self.grad += (1.0 / other.data) * out.grad
+            other.grad += (-self.data / (other.data ** 2)) * out.grad
+        out._backward = _backward
+        return out
+
+    def log(self):
+        out = Value(math.log(self.data), (self,), 'log')
+        def _backward():
+            self.grad += (1 / self.data) * out.grad
+        out._backward = _backward
+        return out
+
+    def exp(self):
+        out = Value(math.exp(self.data), (self,), 'exp')
+        def _backward():
+            self.grad += out.data * out.grad
+        out._backward = _backward
+        return out
+
+    def relu(self):
+        out = Value(0 if self.data < 0 else self.data, (self,), 'ReLU')
+        def _backward():
+            self.grad += (out.data > 0) * out.grad
+        out._backward = _backward
+        return out
+
+    def backward(self): # iterative topological sort (no recursion limit)
+        topo = []
+        visited = set()
+        stack = [(self, False)]
+        while stack:
+            node, processed = stack.pop()
+            if processed:
+                topo.append(node)
+                continue
+            if node in visited:
+                continue
+            visited.add(node)
+            stack.append((node, True))
+            for child in node._prev:
+                if child not in visited:
+                    stack.append((child, False))
+        self.grad = 1
+        for v in reversed(topo):
+            v._backward()
+
+    def __neg__(self): return self * -1
+    def __radd__(self, other): return self + other
+    def __sub__(self, other): return self + (-other)
+    def __rsub__(self, other): return other + (-self)
+    def __rmul__(self, other): return self * other
+    def __rtruediv__(self, other): # uses direct __truediv__ now
+        other = other if isinstance(other, Value) else Value(other)
+        return other / self
+    def __repr__(self): return f"Value(data={self.data}, grad={self.grad})"
+
+# Initialize the parameters, to store the knowledge of the model.
+n_embd = 16     # embedding dimension
+n_head = 4      # number of attention heads
+n_layer = 1     # number of layers
+block_size = 8  # maximum sequence length
+head_dim = n_embd // n_head # dimension of each head
+matrix = lambda nout, nin, std=0.02: [[Value(random.gauss(0, std)) for _ in range(nin)] for _ in range(nout)]
+state_dict = {'wte': matrix(vocab_size, n_embd), 'wpe': matrix(block_size, n_embd)} # weight tying: wte doubles as lm_head
+for i in range(n_layer):
+    state_dict[f'layer{i}.attn_wq'] = matrix(n_embd, n_embd)
+    state_dict[f'layer{i}.attn_wk'] = matrix(n_embd, n_embd)
+    state_dict[f'layer{i}.attn_wv'] = matrix(n_embd, n_embd)
+    state_dict[f'layer{i}.attn_wo'] = matrix(n_embd, n_embd, std=0)
+    state_dict[f'layer{i}.mlp_fc1'] = matrix(4 * n_embd, n_embd)
+    state_dict[f'layer{i}.mlp_fc2'] = matrix(n_embd, 4 * n_embd, std=0)
+params = [p for mat in state_dict.values() for row in mat for p in row] # flatten params into a single list[Value]
+print(f"num params: {len(params)}")
+
+# Define the model architecture: a stateless function mapping token sequence and parameters to logits over what comes next.
+# Follow GPT-2, blessed among the GPTs, with minor differences: layernorm -> rmsnorm, no biases, GeLU -> ReLU^2
+def linear(x, w):
+    return [sum(wi * xi for wi, xi in zip(wo, x)) for wo in w]
+
+def softmax(logits):
+    max_val = max(val.data for val in logits)
+    exps = [(val - max_val).exp() for val in logits]
+    total = sum(exps)
+    return [e / total for e in exps]
+
+def rmsnorm(x):
+    ms = sum(xi * xi for xi in x) / len(x)
+    scale = (ms + 1e-5) ** -0.5
+    return [xi * scale for xi in x]
+
+def cross_entropy(logits, target_id): # fused log-softmax + nll: fewer nodes, numerically stable
+    max_val = max(val.data for val in logits)
+    shifted = [val - max_val for val in logits]
+    log_sum_exp = sum(s.exp() for s in shifted).log()
+    return -(shifted[target_id] - log_sum_exp)
+
+def gpt(token_id, pos_id, keys, values):
+    tok_emb = state_dict['wte'][token_id] # token embedding
+    pos_emb = state_dict['wpe'][pos_id] # position embedding
+    x = [t + p for t, p in zip(tok_emb, pos_emb)] # joint token and position embedding
+    x = rmsnorm(x)
+
+    for li in range(n_layer):
+        # 1) Multi-head attention block
+        x_residual = x
+        x = rmsnorm(x)
+        q = linear(x, state_dict[f'layer{li}.attn_wq'])
+        k = linear(x, state_dict[f'layer{li}.attn_wk'])
+        v = linear(x, state_dict[f'layer{li}.attn_wv'])
+        keys[li].append(k)
+        values[li].append(v)
+        x_attn = []
+        for h in range(n_head):
+            hs = h * head_dim
+            q_h = q[hs:hs+head_dim]
+            k_h = [ki[hs:hs+head_dim] for ki in keys[li]]
+            v_h = [vi[hs:hs+head_dim] for vi in values[li]]
+            attn_logits = [sum(q_h[j] * k_h[t][j] for j in range(head_dim)) / head_dim**0.5 for t in range(len(k_h))]
+            attn_weights = softmax(attn_logits)
+            head_out = [sum(attn_weights[t] * v_h[t][j] for t in range(len(v_h))) for j in range(head_dim)]
+            x_attn.extend(head_out)
+        x = linear(x_attn, state_dict[f'layer{li}.attn_wo'])
+        x = [a + b for a, b in zip(x, x_residual)]
+        # 2) MLP block
+        x_residual = x
+        x = rmsnorm(x)
+        x = linear(x, state_dict[f'layer{li}.mlp_fc1'])
+        x = [xi.relu() ** 2 for xi in x]
+        x = linear(x, state_dict[f'layer{li}.mlp_fc2'])
+        x = [a + b for a, b in zip(x, x_residual)]
+
+    logits = linear(x, state_dict['wte']) # weight tying: reuse token embeddings as output projection
+    return logits
+
+# Let there be Adam, the blessed optimizer and its buffers
+learning_rate, beta1, beta2, eps_adam, weight_decay = 1e-2, 0.9, 0.95, 1e-8, 1e-4
+m = [0.0] * len(params) # first moment buffer
+v = [0.0] * len(params) # second moment buffer
+b1_prod, b2_prod = 1.0, 1.0 # running product for bias correction
+max_grad_norm = 1.0 # gradient clipping threshold
+
+# Repeat in sequence
+num_steps = 500 # number of training steps
+for step in range(num_steps):
+    t0 = time.time()
+
+    # Take single document, tokenize it, surround it with BOS special token on both sides
+    doc = train_docs[step % len(train_docs)]
+    tokens = [BOS] + [stoi[ch] for ch in doc] + [BOS]
+    n = min(block_size, len(tokens) - 1)
+
+    # Forward the token sequence through the model, building up the computation graph all the way to the loss.
+    keys, values = [[] for _ in range(n_layer)], [[] for _ in range(n_layer)]
+    losses = []
+    for pos_id in range(n):
+        token_id, target_id = tokens[pos_id], tokens[pos_id + 1]
+        logits = gpt(token_id, pos_id, keys, values)
+        loss_t = cross_entropy(logits, target_id) # fused cross-entropy replaces softmax+log
+        losses.append(loss_t)
+    loss = (1 / n) * sum(losses[1:], losses[0]) # avoid phantom Value(0) node
+
+    # Backward the loss, calculating the gradients with respect to all model parameters.
+    loss.backward()
+
+    # Gradient clipping by global norm
+    grad_norm = sum(p.grad ** 2 for p in params) ** 0.5
+    if grad_norm > max_grad_norm:
+        for p in params: p.grad *= max_grad_norm / grad_norm
+
+    # AdamW optimizer update with cosine learning rate schedule
+    lr_t = learning_rate * 0.5 * (1 + math.cos(math.pi * step / num_steps))
+    b1_prod *= beta1; b2_prod *= beta2 # running products instead of beta**step
+    for i, p in enumerate(params):
+        m[i] = beta1 * m[i] + (1 - beta1) * p.grad
+        v[i] = beta2 * v[i] + (1 - beta2) * p.grad ** 2
+        m_hat = m[i] / (1 - b1_prod) # stable bias correction
+        v_hat = v[i] / (1 - b2_prod)
+        p.data -= lr_t * (m_hat / (v_hat ** 0.5 + eps_adam) + weight_decay * p.data)
+        p.grad = 0
+
+    print(f"step {step+1:4d}/{num_steps:4d} | loss {loss.data:.4f} | {(time.time()-t0)*1000:.0f}ms")
+
+    # Periodic validation on held-out documents
+    if (step + 1) % 100 == 0:
+        val_loss, val_n = 0.0, 0
+        for vdoc in val_docs[:20]:
+            vt = [BOS] + [stoi[ch] for ch in vdoc] + [BOS]
+            vn = min(block_size, len(vt) - 1)
+            vkeys, vvals = [[] for _ in range(n_layer)], [[] for _ in range(n_layer)]
+            for vp in range(vn):
+                vlogits = gpt(vt[vp], vp, vkeys, vvals)
+                mx = max(l.data for l in vlogits) # pure-float NLL, no autograd overhead
+                val_loss -= vlogits[vt[vp+1]].data - mx - math.log(sum(math.exp(l.data - mx) for l in vlogits))
+                val_n += 1
+        print(f"  val loss: {val_loss / val_n:.4f}")
+
+# Inference: may the model babble back to us, with top-k sampling
+temperature, top_k = 0.6, 5
+print("\n--- inference ---")
+for sample_idx in range(20):
+    keys, values = [[] for _ in range(n_layer)], [[] for _ in range(n_layer)]
+    token_id = BOS
+    print(f"sample {sample_idx+1:2d}: ", end="")
+    for pos_id in range(block_size):
+        logits = gpt(token_id, pos_id, keys, values)
+        top_ids = sorted(range(vocab_size), key=lambda i: logits[i].data, reverse=True)[:top_k]
+        top_logits = [logits[i].data / temperature for i in top_ids]
+        max_tl = max(top_logits)
+        top_probs = [math.exp(tl - max_tl) for tl in top_logits]
+        token_id = top_ids[random.choices(range(top_k), weights=top_probs)[0]]
+        if token_id == BOS:
+            break
+        print(itos[token_id], end="")
+    print()
+
+</script>
+
+<script id="cuda-source" type="text/plain">
+#include <cuda_runtime.h>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cctype>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <numeric>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+/*
+The most atomic way to train and inference a GPT on CUDA.
+This file is the complete fused GPU algorithm.
+Everything else is just efficiency.
+*/
+
+#define CUDA_CHECK(call)                                                                 \
+    do {                                                                                 \
+        cudaError_t err__ = (call);                                                      \
+        if (err__ != cudaSuccess) {                                                      \
+            throw std::runtime_error(std::string("CUDA error: ") +                      \
+                                     cudaGetErrorString(err__) +                         \
+                                     " at " + __FILE__ + ":" + std::to_string(__LINE__)); \
+        }                                                                                \
+    } while (0)
+
+// Let there be fixed model geometry, matching microgpt.py exactly.
+constexpr int kNEmbd = 16;           // embedding dimension
+constexpr int kNHead = 4;            // number of attention heads
+constexpr int kNLayer = 1;           // this fused kernel path currently supports one layer
+constexpr int kBlockSize = 8;        // maximum sequence length
+constexpr int kHeadDim = kNEmbd / kNHead;
+constexpr int kFcDim = 4 * kNEmbd;   // hidden size of the MLP expansion
+constexpr int kMaxVocab = 256;       // hard safety cap for static kernel buffers
+constexpr int kMaxTokens = kBlockSize + 1; // [token_t, ..., token_{t+n}] for next-token targets
+
+// Let there be training knobs, kept numerically aligned with the Python reference.
+struct TrainConfig {
+    int num_steps = 500;
+    int val_every = 100;
+    int val_docs = 20;
+    int num_samples = 20;
+    int top_k = 5;
+    int seed = 42;
+    float temperature = 0.6f;
+
+    float learning_rate = 1e-2f;
+    float beta1 = 0.9f;
+    float beta2 = 0.95f;
+    float eps_adam = 1e-8f;
+    float weight_decay = 1e-4f;
+    float max_grad_norm = 1.0f;
+};
+
+// Let there be dataset and tokenizer state.
+struct DataBundle {
+    std::vector<std::string> docs;
+    std::vector<std::string> train_docs;
+    std::vector<std::string> val_docs;
+    std::unordered_map<char, int> stoi;
+    std::vector<std::string> itos;
+    int bos = 0;
+};
+
+// Let there be a tiny RAII wrapper over device memory.
+template <typename T>
+class DeviceBuffer {
+public:
+    DeviceBuffer() = default;
+    explicit DeviceBuffer(size_t n) { resize(n); }
+
+    ~DeviceBuffer() {
+        if (ptr_ != nullptr) {
+            cudaFree(ptr_);
+            ptr_ = nullptr;
+        }
+    }
+
+    DeviceBuffer(const DeviceBuffer&) = delete;
+    DeviceBuffer& operator=(const DeviceBuffer&) = delete;
+
+    DeviceBuffer(DeviceBuffer&& other) noexcept : ptr_(other.ptr_), size_(other.size_) {
+        other.ptr_ = nullptr;
+        other.size_ = 0;
+    }
+
+    DeviceBuffer& operator=(DeviceBuffer&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        if (ptr_ != nullptr) {
+            cudaFree(ptr_);
+        }
+        ptr_ = other.ptr_;
+        size_ = other.size_;
+        other.ptr_ = nullptr;
+        other.size_ = 0;
+        return *this;
+    }
+
+    void resize(size_t n) {
+        if (n == size_) {
+            return;
+        }
+        if (ptr_ != nullptr) {
+            CUDA_CHECK(cudaFree(ptr_));
+            ptr_ = nullptr;
+        }
+        size_ = n;
+        if (size_ > 0) {
+            CUDA_CHECK(cudaMalloc(&ptr_, sizeof(T) * size_));
+        }
+    }
+
+    void upload(const std::vector<T>& host) {
+        resize(host.size());
+        if (size_ > 0) {
+            CUDA_CHECK(cudaMemcpy(ptr_, host.data(), sizeof(T) * size_, cudaMemcpyHostToDevice));
+        }
+    }
+
+    void upload_raw(const T* host, size_t n) {
+        if (n > size_) {
+            throw std::runtime_error("upload_raw exceeds device buffer size");
+        }
+        if (n > 0) {
+            CUDA_CHECK(cudaMemcpy(ptr_, host, sizeof(T) * n, cudaMemcpyHostToDevice));
+        }
+    }
+
+    void download(std::vector<T>& host) const {
+        host.resize(size_);
+        if (size_ > 0) {
+            CUDA_CHECK(cudaMemcpy(host.data(), ptr_, sizeof(T) * size_, cudaMemcpyDeviceToHost));
+        }
+    }
+
+    void download_raw(T* host, size_t n) const {
+        if (n > size_) {
+            throw std::runtime_error("download_raw exceeds device buffer size");
+        }
+        if (n > 0) {
+            CUDA_CHECK(cudaMemcpy(host, ptr_, sizeof(T) * n, cudaMemcpyDeviceToHost));
+        }
+    }
+
+    void zero() {
+        if (size_ > 0) {
+            CUDA_CHECK(cudaMemset(ptr_, 0, sizeof(T) * size_));
+        }
+    }
+
+    T* data() { return ptr_; }
+    const T* data() const { return ptr_; }
+    size_t size() const { return size_; }
+
+private:
+    T* ptr_ = nullptr;
+    size_t size_ = 0;
+};
+
+// Let there be a plain pointer view for passing model buffers into kernels.
+struct ModelPtrs {
+    int vocab_size = 0;
+
+    float* wte = nullptr;
+    float* wpe = nullptr;
+    float* attn_wq = nullptr;
+    float* attn_wk = nullptr;
+    float* attn_wv = nullptr;
+    float* attn_wo = nullptr;
+    float* mlp_fc1 = nullptr;
+    float* mlp_fc2 = nullptr;
+
+    float* g_wte = nullptr;
+    float* g_wpe = nullptr;
+    float* g_attn_wq = nullptr;
+    float* g_attn_wk = nullptr;
+    float* g_attn_wv = nullptr;
+    float* g_attn_wo = nullptr;
+    float* g_mlp_fc1 = nullptr;
+    float* g_mlp_fc2 = nullptr;
+
+    float* m_wte = nullptr;
+    float* m_wpe = nullptr;
+    float* m_attn_wq = nullptr;
+    float* m_attn_wk = nullptr;
+    float* m_attn_wv = nullptr;
+    float* m_attn_wo = nullptr;
+    float* m_mlp_fc1 = nullptr;
+    float* m_mlp_fc2 = nullptr;
+
+    float* v_wte = nullptr;
+    float* v_wpe = nullptr;
+    float* v_attn_wq = nullptr;
+    float* v_attn_wk = nullptr;
+    float* v_attn_wv = nullptr;
+    float* v_attn_wo = nullptr;
+    float* v_mlp_fc1 = nullptr;
+    float* v_mlp_fc2 = nullptr;
+};
+
+// Let there be parameters and optimizer state resident on the GPU.
+struct DeviceModel {
+    int vocab_size = 0;
+
+    DeviceBuffer<float> wte;
+    DeviceBuffer<float> wpe;
+    DeviceBuffer<float> attn_wq;
+    DeviceBuffer<float> attn_wk;
+    DeviceBuffer<float> attn_wv;
+    DeviceBuffer<float> attn_wo;
+    DeviceBuffer<float> mlp_fc1;
+    DeviceBuffer<float> mlp_fc2;
+
+    DeviceBuffer<float> g_wte;
+    DeviceBuffer<float> g_wpe;
+    DeviceBuffer<float> g_attn_wq;
+    DeviceBuffer<float> g_attn_wk;
+    DeviceBuffer<float> g_attn_wv;
+    DeviceBuffer<float> g_attn_wo;
+    DeviceBuffer<float> g_mlp_fc1;
+    DeviceBuffer<float> g_mlp_fc2;
+
+    DeviceBuffer<float> m_wte;
+    DeviceBuffer<float> m_wpe;
+    DeviceBuffer<float> m_attn_wq;
+    DeviceBuffer<float> m_attn_wk;
+    DeviceBuffer<float> m_attn_wv;
+    DeviceBuffer<float> m_attn_wo;
+    DeviceBuffer<float> m_mlp_fc1;
+    DeviceBuffer<float> m_mlp_fc2;
+
+    DeviceBuffer<float> v_wte;
+    DeviceBuffer<float> v_wpe;
+    DeviceBuffer<float> v_attn_wq;
+    DeviceBuffer<float> v_attn_wk;
+    DeviceBuffer<float> v_attn_wv;
+    DeviceBuffer<float> v_attn_wo;
+    DeviceBuffer<float> v_mlp_fc1;
+    DeviceBuffer<float> v_mlp_fc2;
+
+    // Initialize weights with the same random scheme as microgpt.py.
+    DeviceModel(int vocab, std::mt19937& rng)
+        : vocab_size(vocab),
+          wte(static_cast<size_t>(vocab) * kNEmbd),
+          wpe(static_cast<size_t>(kBlockSize) * kNEmbd),
+          attn_wq(static_cast<size_t>(kNEmbd) * kNEmbd),
+          attn_wk(static_cast<size_t>(kNEmbd) * kNEmbd),
+          attn_wv(static_cast<size_t>(kNEmbd) * kNEmbd),
+          attn_wo(static_cast<size_t>(kNEmbd) * kNEmbd),
+          mlp_fc1(static_cast<size_t>(kFcDim) * kNEmbd),
+          mlp_fc2(static_cast<size_t>(kNEmbd) * kFcDim),
+          g_wte(static_cast<size_t>(vocab) * kNEmbd),
+          g_wpe(static_cast<size_t>(kBlockSize) * kNEmbd),
+          g_attn_wq(static_cast<size_t>(kNEmbd) * kNEmbd),
+          g_attn_wk(static_cast<size_t>(kNEmbd) * kNEmbd),
+          g_attn_wv(static_cast<size_t>(kNEmbd) * kNEmbd),
+          g_attn_wo(static_cast<size_t>(kNEmbd) * kNEmbd),
+          g_mlp_fc1(static_cast<size_t>(kFcDim) * kNEmbd),
+          g_mlp_fc2(static_cast<size_t>(kNEmbd) * kFcDim),
+          m_wte(static_cast<size_t>(vocab) * kNEmbd),
+          m_wpe(static_cast<size_t>(kBlockSize) * kNEmbd),
+          m_attn_wq(static_cast<size_t>(kNEmbd) * kNEmbd),
+          m_attn_wk(static_cast<size_t>(kNEmbd) * kNEmbd),
+          m_attn_wv(static_cast<size_t>(kNEmbd) * kNEmbd),
+          m_attn_wo(static_cast<size_t>(kNEmbd) * kNEmbd),
+          m_mlp_fc1(static_cast<size_t>(kFcDim) * kNEmbd),
+          m_mlp_fc2(static_cast<size_t>(kNEmbd) * kFcDim),
+          v_wte(static_cast<size_t>(vocab) * kNEmbd),
+          v_wpe(static_cast<size_t>(kBlockSize) * kNEmbd),
+          v_attn_wq(static_cast<size_t>(kNEmbd) * kNEmbd),
+          v_attn_wk(static_cast<size_t>(kNEmbd) * kNEmbd),
+          v_attn_wv(static_cast<size_t>(kNEmbd) * kNEmbd),
+          v_attn_wo(static_cast<size_t>(kNEmbd) * kNEmbd),
+          v_mlp_fc1(static_cast<size_t>(kFcDim) * kNEmbd),
+          v_mlp_fc2(static_cast<size_t>(kNEmbd) * kFcDim) {
+        // Parameter init: Gaussian(0, 0.02), with selected projections zero-initialized.
+        init_matrix(wte, 0.02f, rng);
+        init_matrix(wpe, 0.02f, rng);
+        init_matrix(attn_wq, 0.02f, rng);
+        init_matrix(attn_wk, 0.02f, rng);
+        init_matrix(attn_wv, 0.02f, rng);
+        init_matrix(attn_wo, 0.0f, rng);
+        init_matrix(mlp_fc1, 0.02f, rng);
+        init_matrix(mlp_fc2, 0.0f, rng);
+
+        g_wte.zero();
+        g_wpe.zero();
+        g_attn_wq.zero();
+        g_attn_wk.zero();
+        g_attn_wv.zero();
+        g_attn_wo.zero();
+        g_mlp_fc1.zero();
+        g_mlp_fc2.zero();
+
+        m_wte.zero();
+        m_wpe.zero();
+        m_attn_wq.zero();
+        m_attn_wk.zero();
+        m_attn_wv.zero();
+        m_attn_wo.zero();
+        m_mlp_fc1.zero();
+        m_mlp_fc2.zero();
+
+        v_wte.zero();
+        v_wpe.zero();
+        v_attn_wq.zero();
+        v_attn_wk.zero();
+        v_attn_wv.zero();
+        v_attn_wo.zero();
+        v_mlp_fc1.zero();
+        v_mlp_fc2.zero();
+    }
+
+    // Count all trainable scalars, for observability parity with microgpt.py.
+    size_t num_params() const {
+        return wte.size() + wpe.size() + attn_wq.size() + attn_wk.size() + attn_wv.size() +
+               attn_wo.size() + mlp_fc1.size() + mlp_fc2.size();
+    }
+
+    ModelPtrs ptrs() {
+        ModelPtrs p;
+        p.vocab_size = vocab_size;
+
+        p.wte = wte.data();
+        p.wpe = wpe.data();
+        p.attn_wq = attn_wq.data();
+        p.attn_wk = attn_wk.data();
+        p.attn_wv = attn_wv.data();
+        p.attn_wo = attn_wo.data();
+        p.mlp_fc1 = mlp_fc1.data();
+        p.mlp_fc2 = mlp_fc2.data();
+
+        p.g_wte = g_wte.data();
+        p.g_wpe = g_wpe.data();
+        p.g_attn_wq = g_attn_wq.data();
+        p.g_attn_wk = g_attn_wk.data();
+        p.g_attn_wv = g_attn_wv.data();
+        p.g_attn_wo = g_attn_wo.data();
+        p.g_mlp_fc1 = g_mlp_fc1.data();
+        p.g_mlp_fc2 = g_mlp_fc2.data();
+
+        p.m_wte = m_wte.data();
+        p.m_wpe = m_wpe.data();
+        p.m_attn_wq = m_attn_wq.data();
+        p.m_attn_wk = m_attn_wk.data();
+        p.m_attn_wv = m_attn_wv.data();
+        p.m_attn_wo = m_attn_wo.data();
+        p.m_mlp_fc1 = m_mlp_fc1.data();
+        p.m_mlp_fc2 = m_mlp_fc2.data();
+
+        p.v_wte = v_wte.data();
+        p.v_wpe = v_wpe.data();
+        p.v_attn_wq = v_attn_wq.data();
+        p.v_attn_wk = v_attn_wk.data();
+        p.v_attn_wv = v_attn_wv.data();
+        p.v_attn_wo = v_attn_wo.data();
+        p.v_mlp_fc1 = v_mlp_fc1.data();
+        p.v_mlp_fc2 = v_mlp_fc2.data();
+        return p;
+    }
+
+private:
+    // Host-side random init, uploaded once; parameters stay device-resident afterward.
+    static void init_matrix(DeviceBuffer<float>& dst, float stddev, std::mt19937& rng) {
+        std::vector<float> host(dst.size(), 0.0f);
+        if (stddev != 0.0f) {
+            std::normal_distribution<float> dist(0.0f, stddev);
+            for (float& x : host) {
+                x = dist(rng);
+            }
+        }
+        dst.upload(host);
+    }
+};
+
+// Trim a line from the input corpus.
+static std::string trim_copy(const std::string& s) {
+    size_t start = 0;
+    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) {
+        ++start;
+    }
+    size_t end = s.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) {
+        --end;
+    }
+    return s.substr(start, end - start);
+}
+
+// Let there be an input dataset file, matching Python behavior on first run.
+static void ensure_input_file() {
+    namespace fs = std::filesystem;
+    if (fs::exists("input.txt")) {
+        return;
+    }
+#ifdef _WIN32
+    const char* cmd =
+        "powershell -NoProfile -Command \""
+        "$u='https://raw.githubusercontent.com/karpathy/makemore/refs/heads/master/names.txt';"
+        "Invoke-WebRequest -Uri $u -OutFile 'input.txt' -UseBasicParsing\"";
+    int rc = std::system(cmd);
+    if (rc != 0 || !fs::exists("input.txt")) {
+        throw std::runtime_error("failed to download input.txt");
+    }
+#else
+    throw std::runtime_error("input.txt missing and auto-download only implemented for Windows");
+#endif
+}
+
+// Load docs, split train/val, and build a character tokenizer with <BOS>.
+static DataBundle load_data(std::mt19937& rng) {
+    ensure_input_file();
+
+    std::ifstream f("input.txt");
+    if (!f) {
+        throw std::runtime_error("failed to open input.txt");
+    }
+
+    DataBundle data;
+    std::string line;
+    while (std::getline(f, line)) {
+        std::string s = trim_copy(line);
+        if (!s.empty()) {
+            data.docs.push_back(s);
+        }
+    }
+    if (data.docs.empty()) {
+        throw std::runtime_error("input.txt is empty");
+    }
+
+    std::shuffle(data.docs.begin(), data.docs.end(), rng);
+    size_t split = static_cast<size_t>(0.9 * static_cast<double>(data.docs.size()));
+    if (split == 0 && data.docs.size() > 1) {
+        split = 1;
+    }
+    if (split >= data.docs.size() && data.docs.size() > 1) {
+        split = data.docs.size() - 1;
+    }
+    data.train_docs.assign(data.docs.begin(), data.docs.begin() + static_cast<std::ptrdiff_t>(split));
+    data.val_docs.assign(data.docs.begin() + static_cast<std::ptrdiff_t>(split), data.docs.end());
+
+    std::array<bool, 256> seen{};
+    for (const std::string& doc : data.docs) {
+        for (unsigned char c : doc) {
+            seen[c] = true;
+        }
+    }
+
+    std::vector<char> chars;
+    for (int i = 0; i < 256; ++i) {
+        if (seen[static_cast<size_t>(i)]) {
+            chars.push_back(static_cast<char>(i));
+        }
+    }
+    std::sort(chars.begin(), chars.end());
+
+    data.itos.clear();
+    data.itos.push_back("<BOS>");
+    data.bos = 0;
+    for (char c : chars) {
+        data.stoi[c] = static_cast<int>(data.itos.size());
+        data.itos.push_back(std::string(1, c));
+    }
+    return data;
+}
+
+// Encode one document as [BOS] + chars + [BOS], exactly like microgpt.py.
+static std::vector<int> encode_doc(
+    const std::string& doc,
+    const std::unordered_map<char, int>& stoi,
+    int bos_token) {
+    std::vector<int> tokens;
+    tokens.reserve(doc.size() + 2);
+    tokens.push_back(bos_token);
+    for (char c : doc) {
+        auto it = stoi.find(c);
+        if (it == stoi.end()) {
+            throw std::runtime_error("document contains out-of-vocab character");
+        }
+        tokens.push_back(it->second);
+    }
+    tokens.push_back(bos_token);
+    return tokens;
+}
+
+// Top-k sampling with temperature, used at inference time.
+static int sample_top_k(
+    const std::vector<float>& logits,
+    int top_k,
+    float temperature,
+    std::mt19937& rng) {
+    int vocab = static_cast<int>(logits.size());
+    int k = std::max(1, std::min(top_k, vocab));
+    std::vector<int> ids(static_cast<size_t>(vocab));
+    std::iota(ids.begin(), ids.end(), 0);
+    std::partial_sort(
+        ids.begin(),
+        ids.begin() + k,
+        ids.end(),
+        [&](int a, int b) { return logits[static_cast<size_t>(a)] > logits[static_cast<size_t>(b)]; });
+
+    std::vector<float> scaled(static_cast<size_t>(k), 0.0f);
+    for (int i = 0; i < k; ++i) {
+        scaled[static_cast<size_t>(i)] = logits[static_cast<size_t>(ids[static_cast<size_t>(i)])] / temperature;
+    }
+    float mx = *std::max_element(scaled.begin(), scaled.end());
+    std::vector<float> probs(static_cast<size_t>(k), 0.0f);
+    for (int i = 0; i < k; ++i) {
+        probs[static_cast<size_t>(i)] = std::exp(scaled[static_cast<size_t>(i)] - mx);
+    }
+    std::discrete_distribution<int> dist(probs.begin(), probs.end());
+    return ids[static_cast<size_t>(dist(rng))];
+}
+
+// Parse optional CLI overrides for fast experiments.
+static TrainConfig parse_args(int argc, char** argv) {
+    TrainConfig cfg;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        auto read_int = [&](const char* name) -> int {
+            if (i + 1 >= argc) {
+                throw std::runtime_error(std::string("missing value for ") + name);
+            }
+            return std::stoi(argv[++i]);
+        };
+        auto read_float = [&](const char* name) -> float {
+            if (i + 1 >= argc) {
+                throw std::runtime_error(std::string("missing value for ") + name);
+            }
+            return std::stof(argv[++i]);
+        };
+
+        if (arg == "--steps") {
+            cfg.num_steps = read_int("--steps");
+        } else if (arg == "--val-every") {
+            cfg.val_every = read_int("--val-every");
+        } else if (arg == "--val-docs") {
+            cfg.val_docs = read_int("--val-docs");
+        } else if (arg == "--samples") {
+            cfg.num_samples = read_int("--samples");
+        } else if (arg == "--top-k") {
+            cfg.top_k = read_int("--top-k");
+        } else if (arg == "--temperature") {
+            cfg.temperature = read_float("--temperature");
+        } else if (arg == "--seed") {
+            cfg.seed = read_int("--seed");
+        } else if (arg == "--help") {
+            std::cout
+                << "Usage: microgpt_cuda [options]\n"
+                << "  --steps <int>         training steps (default 500)\n"
+                << "  --val-every <int>     validation interval (default 100)\n"
+                << "  --val-docs <int>      max validation docs per eval (default 20)\n"
+                << "  --samples <int>       number of generated samples (default 20)\n"
+                << "  --top-k <int>         top-k sampling (default 5)\n"
+                << "  --temperature <float> sampling temperature (default 0.6)\n"
+                << "  --seed <int>          RNG seed (default 42)\n";
+            std::exit(0);
+        } else {
+            throw std::runtime_error("unknown argument: " + arg);
+        }
+    }
+    return cfg;
+}
+
+// Below live the scalar CUDA building blocks used by fused kernels.
+__device__ inline void d_vec_copy(const float* src, float* dst, int n) {
+    for (int i = 0; i < n; ++i) {
+        dst[i] = src[i];
+    }
+}
+
+__device__ inline void d_vec_add_inplace(float* dst, const float* src, int n) {
+    for (int i = 0; i < n; ++i) {
+        dst[i] += src[i];
+    }
+}
+
+// y = W * x
+__device__ inline void d_matvec(const float* w, const float* x, float* y, int out, int in) {
+    for (int row = 0; row < out; ++row) {
+        float acc = 0.0f;
+        int base = row * in;
+        for (int col = 0; col < in; ++col) {
+            acc += w[base + col] * x[col];
+        }
+        y[row] = acc;
+    }
+}
+
+// dx = W^T * dy
+__device__ inline void d_matvec_t(const float* w, const float* dy, float* dx, int out, int in) {
+    for (int col = 0; col < in; ++col) {
+        float acc = 0.0f;
+        for (int row = 0; row < out; ++row) {
+            acc += w[row * in + col] * dy[row];
+        }
+        dx[col] = acc;
+    }
+}
+
+// dW += dy outer x
+__device__ inline void d_outer_add(float* dw, const float* dy, const float* x, int out, int in) {
+    for (int row = 0; row < out; ++row) {
+        int base = row * in;
+        for (int col = 0; col < in; ++col) {
+            dw[base + col] += dy[row] * x[col];
+        }
+    }
+}
+
+// Fused linear backward: accumulate dW and produce dx.
+__device__ inline void d_linear_backward(
+    const float* w,
+    float* dw,
+    int out,
+    int in,
+    const float* x,
+    const float* dy,
+    float* dx) {
+    d_outer_add(dw, dy, x, out, in);
+    d_matvec_t(w, dy, dx, out, in);
+}
+
+// RMSNorm forward and backward, matching Python math.
+__device__ inline void d_rmsnorm_forward(const float* x, float* y, float* inv_rms, int n) {
+    float ms = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        ms += x[i] * x[i];
+    }
+    ms /= static_cast<float>(n);
+    *inv_rms = rsqrtf(ms + 1e-5f);
+    for (int i = 0; i < n; ++i) {
+        y[i] = x[i] * (*inv_rms);
+    }
+}
+
+__device__ inline void d_rmsnorm_backward(
+    const float* x,
+    float inv_rms,
+    const float* dy,
+    float* dx,
+    int n) {
+    float dot = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        dot += dy[i] * x[i];
+    }
+    float coeff = (inv_rms * inv_rms * inv_rms) / static_cast<float>(n);
+    for (int i = 0; i < n; ++i) {
+        dx[i] = dy[i] * inv_rms - x[i] * dot * coeff;
+    }
+}
+
+// Stable softmax and fused CE used throughout train/eval.
+__device__ inline void d_softmax(const float* logits, int n, float* probs) {
+    float mx = logits[0];
+    for (int i = 1; i < n; ++i) {
+        if (logits[i] > mx) {
+            mx = logits[i];
+        }
+    }
+    float sum_exp = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        probs[i] = expf(logits[i] - mx);
+        sum_exp += probs[i];
+    }
+    float inv = 1.0f / sum_exp;
+    for (int i = 0; i < n; ++i) {
+        probs[i] *= inv;
+    }
+}
+
+__device__ inline float d_cross_entropy_with_probs(const float* logits, int vocab, int target, float* probs) {
+    float mx = logits[0];
+    for (int i = 1; i < vocab; ++i) {
+        if (logits[i] > mx) {
+            mx = logits[i];
+        }
+    }
+
+    float sum_exp = 0.0f;
+    for (int i = 0; i < vocab; ++i) {
+        probs[i] = expf(logits[i] - mx);
+        sum_exp += probs[i];
+    }
+    float inv = 1.0f / sum_exp;
+    for (int i = 0; i < vocab; ++i) {
+        probs[i] *= inv;
+    }
+
+    return -(logits[target] - mx - logf(sum_exp));
+}
+
+__device__ inline void d_zero(float* x, int n) {
+    for (int i = 0; i < n; ++i) {
+        x[i] = 0.0f;
+    }
+}
+
+// One-array AdamW update with bias correction and optional grad scaling.
+__device__ inline void d_adamw_array(
+    float* w,
+    float* g,
+    float* m,
+    float* v,
+    int n,
+    float lr,
+    float beta1,
+    float beta2,
+    float eps,
+    float weight_decay,
+    float one_minus_b1_prod,
+    float one_minus_b2_prod,
+    float grad_scale) {
+    for (int i = 0; i < n; ++i) {
+        float grad = g[i] * grad_scale;
+        float mi = beta1 * m[i] + (1.0f - beta1) * grad;
+        float vi = beta2 * v[i] + (1.0f - beta2) * grad * grad;
+        m[i] = mi;
+        v[i] = vi;
+        float m_hat = mi / one_minus_b1_prod;
+        float v_hat = vi / one_minus_b2_prod;
+        w[i] -= lr * (m_hat / (sqrtf(v_hat) + eps) + weight_decay * w[i]);
+        g[i] = 0.0f;
+    }
+}
+
+__global__ void train_step_kernel(
+    ModelPtrs model,
+    const int* tokens,
+    int n,
+    float lr_t,
+    float beta1,
+    float beta2,
+    float eps_adam,
+    float weight_decay,
+    float b1_prod,
+    float b2_prod,
+    float max_grad_norm,
+    float* out_loss,
+    float* out_grad_norm) {
+    // Single-thread fused reference kernel: one launch = one full optimizer step.
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+
+    if (n <= 0 || n > kBlockSize || model.vocab_size <= 0 || model.vocab_size > kMaxVocab) {
+        out_loss[0] = nanf("");
+        out_grad_norm[0] = nanf("");
+        return;
+    }
+
+    const int vocab = model.vocab_size;
+    const float inv_sqrt_head = 1.0f / sqrtf(static_cast<float>(kHeadDim));
+
+    const int wte_size = vocab * kNEmbd;
+    const int wpe_size = kBlockSize * kNEmbd;
+    const int attn_size = kNEmbd * kNEmbd;
+    const int fc1_size = kFcDim * kNEmbd;
+    const int fc2_size = kNEmbd * kFcDim;
+
+    d_zero(model.g_wte, wte_size);
+    d_zero(model.g_wpe, wpe_size);
+    d_zero(model.g_attn_wq, attn_size);
+    d_zero(model.g_attn_wk, attn_size);
+    d_zero(model.g_attn_wv, attn_size);
+    d_zero(model.g_attn_wo, attn_size);
+    d_zero(model.g_mlp_fc1, fc1_size);
+    d_zero(model.g_mlp_fc2, fc2_size);
+
+    float x_tokpos[kBlockSize][kNEmbd];
+    float x0[kBlockSize][kNEmbd];
+    float inv_rms0[kBlockSize];
+
+    float x_resid_attn[kBlockSize][kNEmbd];
+    float x_norm1[kBlockSize][kNEmbd];
+    float inv_rms1[kBlockSize];
+
+    float q[kBlockSize][kNEmbd];
+    float k_cache[kBlockSize][kNEmbd];
+    float v_cache[kBlockSize][kNEmbd];
+    float attn_weights[kBlockSize][kNHead][kBlockSize];
+
+    float x_attn[kBlockSize][kNEmbd];
+    float x_after_attn[kBlockSize][kNEmbd];
+    float x_norm2[kBlockSize][kNEmbd];
+    float inv_rms2[kBlockSize];
+
+    float fc1_pre[kBlockSize][kFcDim];
+    float fc1_act[kBlockSize][kFcDim];
+    float x_out[kBlockSize][kNEmbd];
+    float x_final[kBlockSize][kNEmbd];
+
+    float logits[kBlockSize][kMaxVocab];
+    float probs[kBlockSize][kMaxVocab];
+
+    float total_loss = 0.0f;
+
+    // Forward pass over sequence positions: build activations and per-token CE.
+    for (int pos = 0; pos < n; ++pos) {
+        int token_id = tokens[pos];
+        int target_id = tokens[pos + 1];
+
+        for (int i = 0; i < kNEmbd; ++i) {
+            x_tokpos[pos][i] =
+                model.wte[token_id * kNEmbd + i] + model.wpe[pos * kNEmbd + i];
+        }
+        d_rmsnorm_forward(x_tokpos[pos], x0[pos], &inv_rms0[pos], kNEmbd);
+
+        // 1) Attention block.
+        d_vec_copy(x0[pos], x_resid_attn[pos], kNEmbd);
+        d_rmsnorm_forward(x_resid_attn[pos], x_norm1[pos], &inv_rms1[pos], kNEmbd);
+
+        d_matvec(model.attn_wq, x_norm1[pos], q[pos], kNEmbd, kNEmbd);
+        d_matvec(model.attn_wk, x_norm1[pos], k_cache[pos], kNEmbd, kNEmbd);
+        d_matvec(model.attn_wv, x_norm1[pos], v_cache[pos], kNEmbd, kNEmbd);
+
+        d_zero(x_attn[pos], kNEmbd);
+        for (int h = 0; h < kNHead; ++h) {
+            int hs = h * kHeadDim;
+            float attn_logits[kBlockSize];
+            for (int t = 0; t <= pos; ++t) {
+                float dot = 0.0f;
+                for (int j = 0; j < kHeadDim; ++j) {
+                    dot += q[pos][hs + j] * k_cache[t][hs + j];
+                }
+                attn_logits[t] = dot * inv_sqrt_head;
+            }
+            d_softmax(attn_logits, pos + 1, &attn_weights[pos][h][0]);
+
+            for (int j = 0; j < kHeadDim; ++j) {
+                float sum_v = 0.0f;
+                for (int t = 0; t <= pos; ++t) {
+                    sum_v += attn_weights[pos][h][t] * v_cache[t][hs + j];
+                }
+                x_attn[pos][hs + j] = sum_v;
+            }
+        }
+
+        float wo_out[kNEmbd];
+        d_matvec(model.attn_wo, x_attn[pos], wo_out, kNEmbd, kNEmbd);
+        for (int i = 0; i < kNEmbd; ++i) {
+            x_after_attn[pos][i] = wo_out[i] + x_resid_attn[pos][i];
+        }
+
+        // 2) MLP block.
+        d_rmsnorm_forward(x_after_attn[pos], x_norm2[pos], &inv_rms2[pos], kNEmbd);
+        d_matvec(model.mlp_fc1, x_norm2[pos], fc1_pre[pos], kFcDim, kNEmbd);
+        for (int i = 0; i < kFcDim; ++i) {
+            float z = fc1_pre[pos][i];
+            fc1_act[pos][i] = z > 0.0f ? z * z : 0.0f;
+        }
+        float fc2_out[kNEmbd];
+        d_matvec(model.mlp_fc2, fc1_act[pos], fc2_out, kNEmbd, kFcDim);
+        for (int i = 0; i < kNEmbd; ++i) {
+            x_out[pos][i] = fc2_out[i] + x_after_attn[pos][i];
+            x_final[pos][i] = x_out[pos][i];
+        }
+
+        d_matvec(model.wte, x_final[pos], logits[pos], vocab, kNEmbd);
+        total_loss += d_cross_entropy_with_probs(logits[pos], vocab, target_id, probs[pos]);
+    }
+
+    const float loss = total_loss / static_cast<float>(n);
+
+    float dK[kBlockSize][kNEmbd];
+    float dV[kBlockSize][kNEmbd];
+    for (int t = 0; t < n; ++t) {
+        d_zero(dK[t], kNEmbd);
+        d_zero(dV[t], kNEmbd);
+    }
+
+    const float inv_n = 1.0f / static_cast<float>(n);
+
+    // Backward pass through time: reverse sequence order.
+    for (int pos = n - 1; pos >= 0; --pos) {
+        int token_id = tokens[pos];
+        int target_id = tokens[pos + 1];
+
+        float dlogits[kMaxVocab];
+        for (int i = 0; i < vocab; ++i) {
+            dlogits[i] = probs[pos][i] * inv_n;
+        }
+        dlogits[target_id] -= inv_n;
+
+        float d_x[kNEmbd];
+        d_linear_backward(model.wte, model.g_wte, vocab, kNEmbd, x_final[pos], dlogits, d_x);
+
+        // 2) MLP backward.
+        float d_x_after_attn[kNEmbd];
+        d_vec_copy(d_x, d_x_after_attn, kNEmbd);
+
+        float d_fc1_act[kFcDim];
+        d_linear_backward(model.mlp_fc2, model.g_mlp_fc2, kNEmbd, kFcDim, fc1_act[pos], d_x, d_fc1_act);
+
+        float d_fc1_pre[kFcDim];
+        for (int i = 0; i < kFcDim; ++i) {
+            float z = fc1_pre[pos][i];
+            d_fc1_pre[i] = z > 0.0f ? 2.0f * z * d_fc1_act[i] : 0.0f;
+        }
+
+        float d_x_norm2[kNEmbd];
+        d_linear_backward(model.mlp_fc1, model.g_mlp_fc1, kFcDim, kNEmbd, x_norm2[pos], d_fc1_pre, d_x_norm2);
+
+        float d_norm2_in[kNEmbd];
+        d_rmsnorm_backward(x_after_attn[pos], inv_rms2[pos], d_x_norm2, d_norm2_in, kNEmbd);
+        d_vec_add_inplace(d_x_after_attn, d_norm2_in, kNEmbd);
+
+        // 1) Attention backward.
+        float d_x_resid_attn[kNEmbd];
+        d_vec_copy(d_x_after_attn, d_x_resid_attn, kNEmbd);
+
+        float d_x_attn[kNEmbd];
+        d_linear_backward(model.attn_wo, model.g_attn_wo, kNEmbd, kNEmbd, x_attn[pos], d_x_after_attn, d_x_attn);
+
+        float dq[kNEmbd];
+        d_zero(dq, kNEmbd);
+
+        for (int h = 0; h < kNHead; ++h) {
+            int hs = h * kHeadDim;
+            float dweights[kBlockSize];
+            for (int t = 0; t <= pos; ++t) {
+                float dot = 0.0f;
+                for (int j = 0; j < kHeadDim; ++j) {
+                    dot += d_x_attn[hs + j] * v_cache[t][hs + j];
+                }
+                dweights[t] = dot;
+
+                float wt = attn_weights[pos][h][t];
+                for (int j = 0; j < kHeadDim; ++j) {
+                    dV[t][hs + j] += wt * d_x_attn[hs + j];
+                }
+            }
+
+            float sum_dw_w = 0.0f;
+            for (int t = 0; t <= pos; ++t) {
+                sum_dw_w += dweights[t] * attn_weights[pos][h][t];
+            }
+
+            for (int t = 0; t <= pos; ++t) {
+                float wt = attn_weights[pos][h][t];
+                float dlogit = wt * (dweights[t] - sum_dw_w);
+                for (int j = 0; j < kHeadDim; ++j) {
+                    dq[hs + j] += dlogit * k_cache[t][hs + j] * inv_sqrt_head;
+                    dK[t][hs + j] += dlogit * q[pos][hs + j] * inv_sqrt_head;
+                }
+            }
+        }
+
+        float d_x_norm1[kNEmbd];
+        d_zero(d_x_norm1, kNEmbd);
+        float d_tmp[kNEmbd];
+
+        d_linear_backward(model.attn_wq, model.g_attn_wq, kNEmbd, kNEmbd, x_norm1[pos], dq, d_tmp);
+        d_vec_add_inplace(d_x_norm1, d_tmp, kNEmbd);
+
+        d_linear_backward(model.attn_wk, model.g_attn_wk, kNEmbd, kNEmbd, x_norm1[pos], dK[pos], d_tmp);
+        d_vec_add_inplace(d_x_norm1, d_tmp, kNEmbd);
+
+        d_linear_backward(model.attn_wv, model.g_attn_wv, kNEmbd, kNEmbd, x_norm1[pos], dV[pos], d_tmp);
+        d_vec_add_inplace(d_x_norm1, d_tmp, kNEmbd);
+
+        float d_norm1_in[kNEmbd];
+        d_rmsnorm_backward(x_resid_attn[pos], inv_rms1[pos], d_x_norm1, d_norm1_in, kNEmbd);
+
+        for (int i = 0; i < kNEmbd; ++i) {
+            d_x[i] = d_x_resid_attn[i] + d_norm1_in[i];
+        }
+
+        float d_tokpos[kNEmbd];
+        d_rmsnorm_backward(x_tokpos[pos], inv_rms0[pos], d_x, d_tokpos, kNEmbd);
+        for (int i = 0; i < kNEmbd; ++i) {
+            model.g_wte[token_id * kNEmbd + i] += d_tokpos[i];
+            model.g_wpe[pos * kNEmbd + i] += d_tokpos[i];
+        }
+    }
+
+    // Gradient clipping by global norm.
+    double sum_sq = 0.0;
+    for (int i = 0; i < wte_size; ++i) {
+        double g = model.g_wte[i];
+        sum_sq += g * g;
+    }
+    for (int i = 0; i < wpe_size; ++i) {
+        double g = model.g_wpe[i];
+        sum_sq += g * g;
+    }
+    for (int i = 0; i < attn_size; ++i) {
+        double gq = model.g_attn_wq[i];
+        double gk = model.g_attn_wk[i];
+        double gv = model.g_attn_wv[i];
+        double go = model.g_attn_wo[i];
+        sum_sq += gq * gq + gk * gk + gv * gv + go * go;
+    }
+    for (int i = 0; i < fc1_size; ++i) {
+        double g = model.g_mlp_fc1[i];
+        sum_sq += g * g;
+    }
+    for (int i = 0; i < fc2_size; ++i) {
+        double g = model.g_mlp_fc2[i];
+        sum_sq += g * g;
+    }
+
+    float gnorm = sqrtf(static_cast<float>(sum_sq));
+    float grad_scale = 1.0f;
+    if (gnorm > max_grad_norm) {
+        grad_scale = max_grad_norm / gnorm;
+    }
+
+    float one_minus_b1_prod = 1.0f - b1_prod;
+    float one_minus_b2_prod = 1.0f - b2_prod;
+
+    // AdamW update for every parameter tensor.
+    d_adamw_array(
+        model.wte,
+        model.g_wte,
+        model.m_wte,
+        model.v_wte,
+        wte_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.wpe,
+        model.g_wpe,
+        model.m_wpe,
+        model.v_wpe,
+        wpe_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.attn_wq,
+        model.g_attn_wq,
+        model.m_attn_wq,
+        model.v_attn_wq,
+        attn_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.attn_wk,
+        model.g_attn_wk,
+        model.m_attn_wk,
+        model.v_attn_wk,
+        attn_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.attn_wv,
+        model.g_attn_wv,
+        model.m_attn_wv,
+        model.v_attn_wv,
+        attn_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.attn_wo,
+        model.g_attn_wo,
+        model.m_attn_wo,
+        model.v_attn_wo,
+        attn_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.mlp_fc1,
+        model.g_mlp_fc1,
+        model.m_mlp_fc1,
+        model.v_mlp_fc1,
+        fc1_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+    d_adamw_array(
+        model.mlp_fc2,
+        model.g_mlp_fc2,
+        model.m_mlp_fc2,
+        model.v_mlp_fc2,
+        fc2_size,
+        lr_t,
+        beta1,
+        beta2,
+        eps_adam,
+        weight_decay,
+        one_minus_b1_prod,
+        one_minus_b2_prod,
+        grad_scale);
+
+    out_loss[0] = loss;
+    out_grad_norm[0] = gnorm;
+}
+
+__device__ inline void d_forward_token_logits(
+    ModelPtrs model,
+    const int* tokens,
+    int pos,
+    float k_cache[kBlockSize][kNEmbd],
+    float v_cache[kBlockSize][kNEmbd],
+    float* logits_out) {
+    // Stateless per-token forward, reusing externally provided KV caches.
+    const float inv_sqrt_head = 1.0f / sqrtf(static_cast<float>(kHeadDim));
+
+    int token_id = tokens[pos];
+    float x[kNEmbd];
+    float x_norm[kNEmbd];
+    float inv_rms = 0.0f;
+
+    for (int i = 0; i < kNEmbd; ++i) {
+        x[i] = model.wte[token_id * kNEmbd + i] + model.wpe[pos * kNEmbd + i];
+    }
+    d_rmsnorm_forward(x, x_norm, &inv_rms, kNEmbd);
+
+    // 1) Attention block.
+    float x_resid_attn[kNEmbd];
+    d_vec_copy(x_norm, x_resid_attn, kNEmbd);
+
+    float x_norm1[kNEmbd];
+    d_rmsnorm_forward(x_resid_attn, x_norm1, &inv_rms, kNEmbd);
+
+    float q[kNEmbd];
+    d_matvec(model.attn_wq, x_norm1, q, kNEmbd, kNEmbd);
+    d_matvec(model.attn_wk, x_norm1, k_cache[pos], kNEmbd, kNEmbd);
+    d_matvec(model.attn_wv, x_norm1, v_cache[pos], kNEmbd, kNEmbd);
+
+    float x_attn[kNEmbd];
+    d_zero(x_attn, kNEmbd);
+    for (int h = 0; h < kNHead; ++h) {
+        int hs = h * kHeadDim;
+        float attn_logits[kBlockSize];
+        for (int t = 0; t <= pos; ++t) {
+            float dot = 0.0f;
+            for (int j = 0; j < kHeadDim; ++j) {
+                dot += q[hs + j] * k_cache[t][hs + j];
+            }
+            attn_logits[t] = dot * inv_sqrt_head;
+        }
+        float attn_probs[kBlockSize];
+        d_softmax(attn_logits, pos + 1, attn_probs);
+
+        for (int j = 0; j < kHeadDim; ++j) {
+            float sum_v = 0.0f;
+            for (int t = 0; t <= pos; ++t) {
+                sum_v += attn_probs[t] * v_cache[t][hs + j];
+            }
+            x_attn[hs + j] = sum_v;
+        }
+    }
+
+    float wo_out[kNEmbd];
+    d_matvec(model.attn_wo, x_attn, wo_out, kNEmbd, kNEmbd);
+    float x_after_attn[kNEmbd];
+    for (int i = 0; i < kNEmbd; ++i) {
+        x_after_attn[i] = wo_out[i] + x_resid_attn[i];
+    }
+
+    // 2) MLP block.
+    float x_norm2[kNEmbd];
+    d_rmsnorm_forward(x_after_attn, x_norm2, &inv_rms, kNEmbd);
+    float fc1_pre[kFcDim];
+    d_matvec(model.mlp_fc1, x_norm2, fc1_pre, kFcDim, kNEmbd);
+    float fc1_act[kFcDim];
+    for (int i = 0; i < kFcDim; ++i) {
+        float z = fc1_pre[i];
+        fc1_act[i] = z > 0.0f ? z * z : 0.0f;
+    }
+    float fc2_out[kNEmbd];
+    d_matvec(model.mlp_fc2, fc1_act, fc2_out, kNEmbd, kFcDim);
+    float x_out[kNEmbd];
+    for (int i = 0; i < kNEmbd; ++i) {
+        x_out[i] = fc2_out[i] + x_after_attn[i];
+    }
+
+    // Weight tying: output projection reuses token embedding matrix.
+    d_matvec(model.wte, x_out, logits_out, model.vocab_size, kNEmbd);
+}
+
+__global__ void eval_sequence_nll_kernel(ModelPtrs model, const int* tokens, int n, float* out_nll) {
+    // Validation kernel: forward-only NLL accumulation, no gradient work.
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+
+    if (n <= 0 || n > kBlockSize || model.vocab_size <= 0 || model.vocab_size > kMaxVocab) {
+        out_nll[0] = nanf("");
+        return;
+    }
+
+    float k_cache[kBlockSize][kNEmbd];
+    float v_cache[kBlockSize][kNEmbd];
+    float logits[kMaxVocab];
+    float probs[kMaxVocab];
+
+    float total_nll = 0.0f;
+    for (int pos = 0; pos < n; ++pos) {
+        d_forward_token_logits(model, tokens, pos, k_cache, v_cache, logits);
+        int target = tokens[pos + 1];
+        total_nll += d_cross_entropy_with_probs(logits, model.vocab_size, target, probs);
+    }
+    out_nll[0] = total_nll;
+}
+
+__global__ void forward_last_logits_kernel(ModelPtrs model, const int* tokens, int seq_len, float* out_logits) {
+    // Inference kernel: run causal forward, return logits at final position.
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+
+    if (seq_len <= 0 || seq_len > kBlockSize || model.vocab_size <= 0 || model.vocab_size > kMaxVocab) {
+        for (int i = 0; i < model.vocab_size; ++i) {
+            out_logits[i] = nanf("");
+        }
+        return;
+    }
+
+    float k_cache[kBlockSize][kNEmbd];
+    float v_cache[kBlockSize][kNEmbd];
+    float logits[kMaxVocab];
+
+    for (int pos = 0; pos < seq_len; ++pos) {
+        d_forward_token_logits(model, tokens, pos, k_cache, v_cache, logits);
+    }
+
+    for (int i = 0; i < model.vocab_size; ++i) {
+        out_logits[i] = logits[i];
+    }
+}
+int main(int argc, char** argv) {
+    try {
+        // This fused path is intentionally minimal and currently specialized to one layer.
+        static_assert(kNLayer == 1, "current fused kernels are implemented for n_layer=1");
+
+        // Let there be deterministic setup and data loading.
+        TrainConfig cfg = parse_args(argc, argv);
+        std::mt19937 rng(cfg.seed);
+        DataBundle data = load_data(rng);
+
+        if (data.train_docs.empty()) {
+            throw std::runtime_error("no training documents after split");
+        }
+        if (static_cast<int>(data.itos.size()) > kMaxVocab) {
+            throw std::runtime_error(
+                "vocab size exceeds kMaxVocab. Increase kMaxVocab in microgpt_cuda.cu.");
+        }
+
+        DeviceModel model(static_cast<int>(data.itos.size()), rng);
+        ModelPtrs model_ptrs = model.ptrs();
+
+        DeviceBuffer<int> d_tokens(kMaxTokens);
+        DeviceBuffer<float> d_loss(1);
+        DeviceBuffer<float> d_grad_norm(1);
+        DeviceBuffer<float> d_nll(1);
+        DeviceBuffer<float> d_logits(static_cast<size_t>(model.vocab_size));
+
+        std::cout << "num docs: " << data.docs.size()
+                  << " (train: " << data.train_docs.size()
+                  << ", val: " << data.val_docs.size() << ")\n";
+        std::cout << "vocab size: " << data.itos.size() << "\n";
+        std::cout << "num params: " << model.num_params() << "\n";
+
+        // Adam running products for bias correction.
+        float b1_prod = 1.0f;
+        float b2_prod = 1.0f;
+        constexpr float kPi = 3.14159265358979323846f;
+
+        // Repeat in sequence: one document per step.
+        for (int step = 0; step < cfg.num_steps; ++step) {
+            auto t0 = std::chrono::high_resolution_clock::now();
+
+            const std::string& doc =
+                data.train_docs[static_cast<size_t>(step % static_cast<int>(data.train_docs.size()))];
+            std::vector<int> tokens = encode_doc(doc, data.stoi, data.bos);
+            int n = std::min(kBlockSize, static_cast<int>(tokens.size()) - 1);
+            if (n <= 0) {
+                continue;
+            }
+
+            d_tokens.upload_raw(tokens.data(), static_cast<size_t>(n + 1));
+
+            // Cosine LR schedule, same functional form as microgpt.py.
+            float lr_t = cfg.learning_rate * 0.5f * (1.0f + std::cos(kPi * step / cfg.num_steps));
+            b1_prod *= cfg.beta1;
+            b2_prod *= cfg.beta2;
+
+            // One fused launch performs forward, backward, clipping, and AdamW.
+            train_step_kernel<<<1, 1>>>(
+                model_ptrs,
+                d_tokens.data(),
+                n,
+                lr_t,
+                cfg.beta1,
+                cfg.beta2,
+                cfg.eps_adam,
+                cfg.weight_decay,
+                b1_prod,
+                b2_prod,
+                cfg.max_grad_norm,
+                d_loss.data(),
+                d_grad_norm.data());
+            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(cudaDeviceSynchronize());
+
+            float loss = 0.0f;
+            d_loss.download_raw(&loss, 1);
+
+            auto t1 = std::chrono::high_resolution_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+            std::cout << "step " << std::setw(4) << (step + 1)
+                      << "/" << std::setw(4) << cfg.num_steps
+                      << " | loss " << std::fixed << std::setprecision(4) << loss
+                      << " | " << ms << "ms\n";
+
+            // Periodic validation on held-out docs.
+            if ((step + 1) % cfg.val_every == 0) {
+                float val_loss = 0.0f;
+                int val_n = 0;
+                int eval_docs = std::min(cfg.val_docs, static_cast<int>(data.val_docs.size()));
+                for (int i = 0; i < eval_docs; ++i) {
+                    std::vector<int> vt = encode_doc(data.val_docs[static_cast<size_t>(i)], data.stoi, data.bos);
+                    int vn = std::min(kBlockSize, static_cast<int>(vt.size()) - 1);
+                    if (vn <= 0) {
+                        continue;
+                    }
+                    d_tokens.upload_raw(vt.data(), static_cast<size_t>(vn + 1));
+                    eval_sequence_nll_kernel<<<1, 1>>>(model_ptrs, d_tokens.data(), vn, d_nll.data());
+                    CUDA_CHECK(cudaGetLastError());
+                    CUDA_CHECK(cudaDeviceSynchronize());
+
+                    float nll = 0.0f;
+                    d_nll.download_raw(&nll, 1);
+                    val_loss += nll;
+                    val_n += vn;
+                }
+                if (val_n > 0) {
+                    std::cout << "  val loss: " << std::fixed << std::setprecision(4)
+                              << (val_loss / static_cast<float>(val_n)) << "\n";
+                } else {
+                    std::cout << "  val loss: n/a\n";
+                }
+            }
+        }
+
+        // Inference: top-k sampled autoregressive decoding.
+        std::cout << "\n--- inference ---\n";
+        std::vector<float> host_logits(static_cast<size_t>(model.vocab_size), 0.0f);
+        for (int sample_idx = 0; sample_idx < cfg.num_samples; ++sample_idx) {
+            std::vector<int> seq;
+            seq.push_back(data.bos);
+            std::cout << "sample " << std::setw(2) << (sample_idx + 1) << ": ";
+
+            for (int pos = 0; pos < kBlockSize; ++pos) {
+                d_tokens.upload_raw(seq.data(), seq.size());
+                forward_last_logits_kernel<<<1, 1>>>(
+                    model_ptrs,
+                    d_tokens.data(),
+                    static_cast<int>(seq.size()),
+                    d_logits.data());
+                CUDA_CHECK(cudaGetLastError());
+                CUDA_CHECK(cudaDeviceSynchronize());
+
+                d_logits.download_raw(host_logits.data(), host_logits.size());
+                int token_id = sample_top_k(host_logits, cfg.top_k, cfg.temperature, rng);
+                if (token_id == data.bos) {
+                    break;
+                }
+
+                std::cout << data.itos[static_cast<size_t>(token_id)];
+                seq.push_back(token_id);
+            }
+            std::cout << "\n";
+        }
+
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+</script>
+
+<script>
+(function () {
+  const body = document.body;
+  const btns = Array.from(document.querySelectorAll('.btn'));
+  const pyRaw = document.getElementById('python-source').textContent.replace(/^\n/, '');
+  const cuRaw = document.getElementById('cuda-source').textContent.replace(/^\n/, '');
+
+  const pyPanel = document.getElementById('scroll-python');
+  const cuPanel = document.getElementById('scroll-cuda');
+  const pyMeta = document.getElementById('meta-python');
+  const cuMeta = document.getElementById('meta-cuda');
+
+  function renderCode(raw, container, metaEl) {
+    const lines = raw.replace(/\r\n/g, '\n').split('\n');
+    const frag = document.createDocumentFragment();
+
+    lines.forEach((line, idx) => {
+      const row = document.createElement('div');
+      row.className = 'line';
+
+      const ln = document.createElement('span');
+      ln.className = 'ln';
+      ln.textContent = idx + 1;
+
+      const code = document.createElement('span');
+      code.className = 'code';
+      code.textContent = line;
+
+      row.appendChild(ln);
+      row.appendChild(code);
+      frag.appendChild(row);
+    });
+
+    container.innerHTML = '';
+    container.appendChild(frag);
+    metaEl.textContent = lines.length + ' lines';
+  }
+
+  function setView(view) {
+    body.classList.remove('view-python', 'view-cuda', 'view-bilingual');
+    body.classList.add('view-' + view);
+    btns.forEach(btn => btn.classList.toggle('active', btn.dataset.view === view));
+  }
+
+  let syncing = false;
+  function syncScroll(src, dst) {
+    if (syncing) return;
+    syncing = true;
+    const denom = src.scrollHeight - src.clientHeight;
+    const ratio = denom > 0 ? src.scrollTop / denom : 0;
+    const dstDenom = dst.scrollHeight - dst.clientHeight;
+    dst.scrollTop = ratio * (dstDenom > 0 ? dstDenom : 0);
+    syncing = false;
+  }
+
+  renderCode(pyRaw, pyPanel, pyMeta);
+  renderCode(cuRaw, cuPanel, cuMeta);
+
+  btns.forEach(btn => {
+    btn.addEventListener('click', () => setView(btn.dataset.view));
+  });
+
+  pyPanel.addEventListener('scroll', () => {
+    if (body.classList.contains('view-bilingual')) {
+      syncScroll(pyPanel, cuPanel);
+    }
+  });
+  cuPanel.addEventListener('scroll', () => {
+    if (body.classList.contains('view-bilingual')) {
+      syncScroll(cuPanel, pyPanel);
+    }
+  });
+})();
+</script>
 </body>
 </html>

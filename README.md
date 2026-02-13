@@ -1,5 +1,7 @@
 # microgpt (optimized)
 
+![microgpt logo](assets/microgpt.png)
+
 Optimized version of [Karpathy's microgpt](https://karpathy.ai/microgpt.html) — the most atomic way to train and inference a GPT in pure, dependency-free Python.
 
 **293 lines, 0 dependencies.** All optimizations preserve the original simplicity.

